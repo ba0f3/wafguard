@@ -1,0 +1,4 @@
+services:
+  coraza-spoa:
+    volumes:
+      - ./fixtures/coraza-spoa-nomarker.yaml:/config.yaml:ro

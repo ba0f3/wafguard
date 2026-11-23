@@ -2,7 +2,7 @@ HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-sentinel it-failover compose-config compose-up compose-rollout-up compose-failover-up
+.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -43,6 +43,35 @@ it-enrichment:
 
 it-enrichment-integration:
 	WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestEnrichmentStock' -count=1
+
+COMPOSE_ENRICH := -f integration/compose.yaml -f integration/compose.enrich.yaml -f integration/compose.recorder.yaml
+
+compose-enrich-up:
+	docker compose $(COMPOSE_ENRICH) up -d --build coraza-spoa wafguard haproxy redis recorder
+
+it-enrich-synthetic: compose-enrich-up
+	sleep 6
+	WAF_ENRICH_SYNTH=1 WAF_RECORDER=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestEnrichmentSynthetic' -count=1
+
+it-stock-provenance:
+	WAF_INTEGRATION=1 WAF_RECORDER=1 go test -tags=integration ./integration -run '^TestStockVerdict' -count=1
+
+COMPOSE_DETECT := -f integration/compose.yaml -f integration/compose.detectonly.yaml -f integration/compose.recorder.yaml
+it-detectonly:
+	docker compose $(COMPOSE_DETECT) up -d --build --force-recreate coraza-spoa haproxy recorder
+	sleep 5
+	WAF_DETECT_ONLY=1 WAF_INTEGRATION=1 WAF_RECORDER=1 go test -tags=integration ./integration -run '^TestStockVerdictDetectionOnly' -count=1
+	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa haproxy
+
+COMPOSE_NOMARKER := -f integration/compose.yaml -f integration/compose.nomarker.yaml
+it-nomarker:
+	docker compose $(COMPOSE_NOMARKER) up -d --force-recreate coraza-spoa haproxy
+	sleep 4
+	WAF_NOMARKER_RULE=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockVerdictMarkerRuleDisabled' -count=1
+	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa haproxy
+
+it-unban-race:
+	WAF_UNBAN_RACE=1 WAF_INTEGRATION=1 WAF_ROLLOUT=1 go test -tags=integration ./integration -run '^TestHTTPUnban' -count=1
 
 it-sentinel:
 	WAF_SENTINEL=1 SENTINEL_ADDR=$${SENTINEL_ADDR:-127.0.0.1:26379} go test -tags=integration ./integration -run '^TestSentinelMaster' -count=1

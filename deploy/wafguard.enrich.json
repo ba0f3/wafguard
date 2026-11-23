@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "spop_listen": "0.0.0.0:12345",
+  "metrics_listen": "127.0.0.1:9090",
+  "default_mode": "observe",
+  "admission_ttl_seconds": 120,
+  "redis": { "addr": "redis:6379" },
+  "enrich_log_file": "/shared/coraza.jsonl",
+  "enrich_application": "sample_app",
+  "limits": {
+    "max_inflight": 256,
+    "allowed_apps": ["sample_app"]
+  },
+  "apps": {
+    "sample_app": {
+      "waf_deny_window_sec": 30,
+      "waf_deny_threshold": 3,
+      "waf_deny_ban_sec": 900,
+      "max_event_age_sec": 120,
+      "admission_ttl": 120
+    }
+  }
+}

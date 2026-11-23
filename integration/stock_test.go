@@ -110,6 +110,53 @@ func TestStockLifecycle(t *testing.T) {
 	if afterDeny != afterAllow {
 		t.Fatalf("origin hits increased on deny: allow=%d deny-phase=%d", afterAllow, afterDeny)
 	}
+
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/status/404", 404},
+		{"/status/503", 503},
+	} {
+		r, err := http.Get(haproxyURL() + tc.path)
+		if err != nil {
+			t.Fatal(tc.path, err)
+		}
+		r.Body.Close()
+		if r.StatusCode != tc.want {
+			t.Fatalf("%s status %d want %d", tc.path, r.StatusCode, tc.want)
+		}
+	}
+}
+
+func TestStockParallelHttp11(t *testing.T) {
+	requireCompose(t)
+	ch := make(chan int, 2)
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, haproxyURL()+"/ok", nil)
+		req.Header.Set("User-Agent", "fixture-deny-request")
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			ch <- 0
+			return
+		}
+		r.Body.Close()
+		ch <- r.StatusCode
+	}()
+	go func() {
+		r, err := http.Get(haproxyURL() + "/ok")
+		if err != nil {
+			ch <- 0
+			return
+		}
+		r.Body.Close()
+		ch <- r.StatusCode
+	}()
+	denyCode, allowCode := <-ch, <-ch
+	if (denyCode == 403 && allowCode == 200) || (denyCode == 200 && allowCode == 403) {
+		return
+	}
+	t.Fatalf("parallel status pair %d %d", denyCode, allowCode)
 }
 
 func haproxyH2URL() string {

@@ -1,0 +1,12 @@
+services:
+  coraza-spoa:
+    volumes:
+      - enrich-log:/shared
+      - ./fixtures/coraza-spoa-enrich.yaml:/config.yaml:ro
+  wafguard:
+    volumes:
+      - enrich-log:/shared
+      - ../deploy/wafguard.enrich.json:/etc/wafguard/config.json:ro
+
+volumes:
+  enrich-log:

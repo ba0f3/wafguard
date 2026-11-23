@@ -97,6 +97,28 @@ func TestSharedBan(t *testing.T) {
 	}
 }
 
+func TestAuthReceiptStoredOnce(t *testing.T) {
+	store, _ := testStore(t)
+	ctx := context.Background()
+	rid := "550e8400-e29b-41d4-a716-446655440010"
+	for i := 0; i < 2; i++ {
+		if err := store.RecordAuth(ctx, policy.AuthReceipt{
+			Application: "sample_app",
+			RequestID:   rid,
+			Outcome:     policy.AuthFailure,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.RecordAuth(ctx, policy.AuthReceipt{
+		Application: "sample_app",
+		RequestID:   "550e8400-e29b-41d4-a716-446655440011",
+		Outcome:     policy.AuthSuccess,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestObserveModeShadow(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

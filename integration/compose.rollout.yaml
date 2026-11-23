@@ -2,13 +2,8 @@ services:
   wafguard:
     volumes:
       - ../deploy/wafguard.enforce.json:/etc/wafguard/config.json:ro
-  redis-replica:
-    image: redis:7-alpine
-    command: ["redis-server", "--replicaof", "redis", "6379", "--appendonly", "yes"]
-    depends_on:
-      redis:
-        condition: service_healthy
-
+    ports:
+      - "19200:19200"
   wafguard2:
     build:
       context: ..

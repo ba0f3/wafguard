@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/admin"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/enrich"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/spoa"
@@ -36,7 +37,10 @@ type fileConfig struct {
 	Limits     limitsConfig `json:"limits"`
 	Apps       map[string]policy.Config `json:"apps"`
 	DefaultMode string `json:"default_mode"`
-	AdmissionTTLSeconds int `json:"admission_ttl_seconds"`
+	AdmissionTTLSeconds int    `json:"admission_ttl_seconds"`
+	AdminHTTPWrite      string   `json:"admin_http_write"`
+	EnrichLogFile       string   `json:"enrich_log_file"`
+	EnrichApplication   string   `json:"enrich_application"`
 }
 
 type redisOptions struct {
@@ -145,6 +149,20 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	}
 	if fc.AdminRead != "" {
 		go serveUnix(fc.AdminRead, admin.New(store, admin.Access{Role: admin.Read}))
+	}
+	if fc.AdminHTTPWrite != "" {
+		go func() {
+			_ = http.ListenAndServe(fc.AdminHTTPWrite, admin.New(store, admin.Access{Role: admin.Write}))
+		}()
+	}
+	if fc.EnrichLogFile != "" {
+		app := fc.EnrichApplication
+		if app == "" {
+			app = "sample_app"
+		}
+		src := enrich.Source{Application: app}
+		lim := enrich.Limits{}
+		go enrich.TailJSONL(ctx, fc.EnrichLogFile, src, lim, store.Enrich)
 	}
 	<-ctx.Done()
 	return l.Close()

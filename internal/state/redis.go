@@ -252,6 +252,7 @@ func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error
 	gen := fmt.Sprintf("unban-%d", time.Now().UnixNano())
 	pipe := s.client.Pipeline()
 	pipe.Del(ctx, s.banKey(req.Application, req.ClientIP))
+	pipe.Del(ctx, s.contribKey(req.Application, req.ClientIP))
 	if req.Suppression > 0 {
 		until := time.Now().Add(req.Suppression).UnixMilli()
 		pipe.Set(ctx, s.supKey(req.Application, req.ClientIP), until, req.Suppression)
