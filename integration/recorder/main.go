@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
@@ -13,9 +14,10 @@ import (
 )
 
 type snap struct {
-	Message string `json:"message"`
-	Action  string `json:"action,omitempty"`
-	Source  string `json:"source,omitempty"`
+	Message          string `json:"message"`
+	Action           string `json:"action,omitempty"`
+	Source           string `json:"source,omitempty"`
+	InspectionError  bool   `json:"inspection_error,omitempty"`
 }
 
 type entry struct {
@@ -61,18 +63,23 @@ func (rec) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *encoding
 	lastID = rid
 	e := getOrCreate(rid)
 	e.Calls = append(e.Calls, name)
-	if name == "waf-verdict" {
+	if name == "waf-verdict" || name == "observe-response" {
 		e.Snapshots = append(e.Snapshots, snap{
-			Message: name,
-			Action:  kvString(m, "request_waf_action"),
-			Source:  kvString(m, "request_waf_source"),
+			Message:         name,
+			Action:          kvString(m, "request_waf_action"),
+			Source:          kvString(m, "request_waf_source"),
+			InspectionError: kvString(m, "request_waf_inspection_error") == "1",
 		})
 	}
 	mu.Unlock()
 
 	switch name {
 	case "check-ban":
-		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.action", "allow")
+		action := "allow"
+		if strings.Contains(kvString(m, "path"), "fixture-precheck-ban") {
+			action = "ban"
+		}
+		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.action", action)
 		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.admission_generation", "rec-gen")
 		_ = w.SetInt64(encoding.VarScopeTransaction, "wafguard.admission_at_ms", 1)
 		_ = w.SetInt64(encoding.VarScopeTransaction, "wafguard.policy_revision", 1)
@@ -126,5 +133,6 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Println("recorder spop on", l.Addr())
-	_ = spop.ListenAndServe(l.Addr().String(), rec{})
+	agent := &spop.Agent{Handler: rec{}, Addr: l.Addr().String()}
+	log.Fatal(agent.Serve(l))
 }

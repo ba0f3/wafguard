@@ -52,6 +52,47 @@ func TestStockCorazaResponseSyncDeny(t *testing.T) {
 	}
 }
 
+func TestStockResponseBodyPhase4Benign(t *testing.T) {
+	if os.Getenv("WAF_CORAZA_RES") == "" {
+		t.Skip("set WAF_CORAZA_RES=1 with compose.responseinspect.yaml up")
+	}
+	requireCompose(t)
+	before := originHits(t)
+	resp, err := http.Get(haproxyURL() + "/marker-resp-body-benign")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("benign phase4 body client %d want 200", resp.StatusCode)
+	}
+	if originHits(t) != before+1 {
+		t.Fatalf("origin hits %d want %d", originHits(t), before+1)
+	}
+}
+
+func TestStockResponseBodyPhase4DenyNegative(t *testing.T) {
+	if os.Getenv("WAF_CORAZA_RES") == "" {
+		t.Skip("set WAF_CORAZA_RES=1 with compose.responseinspect.yaml up")
+	}
+	requireCompose(t)
+	before := originHits(t)
+	resp, err := http.Get(haproxyURL() + "/marker-resp-body-evil")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("evil phase4 body client %d want 403", resp.StatusCode)
+	}
+	if h := resp.Header.Get("waf-block"); h != "response" {
+		t.Fatalf("waf-block %q want response", h)
+	}
+	if originHits(t) != before+1 {
+		t.Fatal("origin 200 before response deny")
+	}
+}
+
 func TestStockDropRequest(t *testing.T) {
 	requireCompose(t)
 	req, err := http.NewRequest(http.MethodGet, haproxyURL()+"/marker-drop", nil)

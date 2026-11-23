@@ -28,6 +28,27 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"marker":"marker-response-deny"}`)
 	})
+	mux.HandleFunc("/marker-resp-body-benign", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"tag":"benign-body-marker"}`)
+	})
+	mux.HandleFunc("/marker-resp-body-evil", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("X-Evil-Marker", "evil-body-marker")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"tag":"evil-body-marker"}`)
+	})
+	mux.HandleFunc("/fixture-affinity-break", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	})
+	mux.HandleFunc("/fixture-precheck-allow-body", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, r.Body)
+	})
 	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))

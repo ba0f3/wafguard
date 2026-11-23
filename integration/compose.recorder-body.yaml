@@ -1,0 +1,23 @@
+services:
+  wafguard:
+    profiles: ["disabled"]
+  coraza-spoa:
+    volumes:
+      - ./fixtures/coraza-spoa-recorder.yaml:/config.yaml:ro
+  coraza-spoa-b:
+    image: ghcr.io/corazawaf/coraza-spoa:0.9.1
+    volumes:
+      - ./fixtures/coraza-spoa-recorder.yaml:/config.yaml:ro
+  haproxy:
+    depends_on:
+      recorder:
+        condition: service_started
+      coraza-spoa:
+        condition: service_started
+      coraza-spoa-b:
+        condition: service_started
+      testorigin:
+        condition: service_started
+    volumes:
+      - ../deploy/haproxy/haproxy-recorder-matrix.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ../deploy/haproxy/coraza-dual.cfg:/usr/local/etc/haproxy/coraza.cfg:ro

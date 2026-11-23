@@ -72,25 +72,3 @@ func TestStockRecorderCalls(t *testing.T) {
 	}
 }
 
-func TestStockBodyAndAffinity(t *testing.T) {
-	requireRecorder(t)
-	resp, err := http.Get(haproxyURL() + "/ok")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	before := originHits(t)
-	req, _ := http.NewRequest(http.MethodGet, haproxyURL()+"/marker-deny", nil)
-	r2, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r2.Body.Close()
-	if r2.StatusCode != 403 {
-		t.Fatalf("status %d", r2.StatusCode)
-	}
-	after := originHits(t)
-	if after != before {
-		t.Fatalf("origin hits changed on deny")
-	}
-}

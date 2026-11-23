@@ -1,0 +1,27 @@
+bind: 0.0.0.0:9000
+log_level: info
+log_file: /dev/stdout
+log_format: console
+default_application: sample_app
+applications:
+  - name: sample_app
+    log_level: info
+    log_file: /dev/stdout
+    log_format: console
+    directives: |
+      SecRuleEngine On
+      SecRequestBodyAccess On
+      SecRequestBodyLimit 131072
+      SecRule REQUEST_HEADERS:User-Agent "@contains fixture-deny-request" "id:1001,phase:1,deny,status:403"
+      SecRule REQUEST_HEADERS:User-Agent "@contains fixture-body-deny" "id:1012,phase:2,deny,status:403"
+      SecRule REQUEST_URI "@contains /marker-deny" "id:1002,phase:1,deny,status:403"
+      SecRule REQUEST_URI "@streq /marker-response-body" "id:1000,phase:1,pass"
+      SecRule REQUEST_URI "@streq /marker-resp-body-benign" "id:1005,phase:1,pass"
+      SecRule REQUEST_URI "@streq /fixture-affinity-break" "id:1006,phase:1,pass"
+      SecResponseBodyAccess On
+      SecResponseBodyLimit 131072
+      SecRule RESPONSE_HEADERS:X-Fixture-Marker "@contains marker-response-deny" "id:2001,phase:3,deny,status:403"
+      SecRule RESPONSE_BODY "@contains benign-body-marker" "id:3001,phase:4,pass"
+      SecRule RESPONSE_BODY "@contains evil-body-marker" "id:3002,phase:4,deny,status:403"
+    response_check: true
+    transaction_ttl_ms: 60000
