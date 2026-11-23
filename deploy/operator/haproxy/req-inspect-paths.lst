@@ -1,3 +1,2 @@
-# One request path prefix per line. Body waiting is opt-in and bounded to
-# 500 ms. Benign lab path below exercises the delayed-body fixture.
-/ok
+# Opt-in request-body waiting. Empty by default: add one path prefix per line
+# to wait up to 500 ms for the request body before Coraza inspects it.

@@ -100,6 +100,10 @@ func New(store *state.Store, access Access) http.Handler {
 				http.Error(w, "bad ip", http.StatusBadRequest)
 				return
 			}
+			if strings.TrimSpace(body.OperationID) == "" {
+				http.Error(w, "operation_id required for idempotent unban", http.StatusBadRequest)
+				return
+			}
 			res, err := store.Unban(r.Context(), state.UnbanRequest{
 				Application: app,
 				ClientIP:    ip,

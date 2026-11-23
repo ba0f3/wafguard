@@ -275,18 +275,97 @@ func TestUnbanIdempotentAndNewerBanProtected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Generation != first.Generation {
-		t.Fatalf("retry changed generation %q -> %q", first.Generation, second.Generation)
+	if second != first {
+		t.Fatalf("retry changed result: first=%+v second=%+v", first, second)
 	}
 	if mrGet(t, mr, "fix12:ban:sample_app:"+ip.String()) == "" {
 		t.Fatal("idempotent retry cleared a newer ban")
 	}
-	assigned, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip})
-	if err != nil || assigned.OperationID == "" {
-		t.Fatalf("empty operation id: %+v err %v", assigned, err)
+	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip}); err == nil {
+		t.Fatal("empty operation id must be rejected")
+	}
+	if _, err := store.Unban(ctx, state.UnbanRequest{
+		Application: "sample_app", ClientIP: ip, OperationID: "op-fix-12", Suppression: time.Minute,
+	}); err == nil {
+		t.Fatal("reusing an operation id with a changed suppression must conflict")
 	}
 	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: netip.MustParseAddr("198.51.100.99"), OperationID: "op-fix-12"}); err == nil {
 		t.Fatal("reusing an operation id for a different target must conflict")
+	}
+}
+
+// Unban must clear the brute window too, and a suppression window must stop
+// both Observe and RecordAuth from re-creating a ban.
+func TestUnbanClearsBruteAndSuppressionStopsReban(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store := newFixStore(t, mr, "fix12b")
+	ctx := context.Background()
+	ip := netip.MustParseAddr("198.51.100.18")
+	cfg := policy.DefaultConfig()
+	cfg.BruteFailures = 2
+	if _, err := store.SetPolicy(ctx, "sample_app", 0, cfg, event.ModeEnforce); err != nil {
+		t.Fatal(err)
+	}
+	for _, rid := range []string{fixRid1, fixRid2} {
+		admission := admit(t, store, rid, ip)
+		if err := store.RecordAuth(ctx, policy.AuthReceipt{
+			Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure,
+			SourceID: "login-app", ClientIP: ip,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Observe(ctx, denyEvent(rid, ip, admission)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mrGet(t, mr, "fix12b:ban:sample_app:"+ip.String()) == "" {
+		t.Fatal("setup ban missing")
+	}
+	if n := zcard(t, mr, "fix12b:brute:sample_app:"+ip.String()); n != 2 {
+		t.Fatalf("setup brute members=%d want 2", n)
+	}
+	res, err := store.Unban(ctx, state.UnbanRequest{
+		Application: "sample_app", ClientIP: ip, OperationID: "op-fix12b", Suppression: 5 * time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := zcard(t, mr, "fix12b:brute:sample_app:"+ip.String()); n != 0 {
+		t.Fatalf("unban left %d brute members", n)
+	}
+	if res.SuppressedUntil.Before(time.Now().Add(4 * time.Minute)) {
+		t.Fatalf("suppression expiry too early: %v", res.SuppressedUntil)
+	}
+	// A single fresh failure during suppression must not re-ban.
+	rid := fixRid3
+	admission := admit(t, store, rid, ip)
+	if err := store.RecordAuth(ctx, policy.AuthReceipt{
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure,
+		SourceID: "login-app", ClientIP: ip,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Observe(ctx, denyEvent(rid, ip, admission)); err != nil {
+		t.Fatal(err)
+	}
+	if mrGet(t, mr, "fix12b:ban:sample_app:"+ip.String()) != "" {
+		t.Fatal("suppressed request re-created a ban")
+	}
+	mr.FastForward(6 * time.Minute)
+	for _, rid = range []string{fixRid4, fixRid5} {
+		admission = admit(t, store, rid, ip)
+		if err := store.RecordAuth(ctx, policy.AuthReceipt{
+			Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure,
+			SourceID: "login-app", ClientIP: ip,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Observe(ctx, denyEvent(rid, ip, admission)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mrGet(t, mr, "fix12b:ban:sample_app:"+ip.String()) == "" {
+		t.Fatal("ban must resume after suppression expires")
 	}
 }
 

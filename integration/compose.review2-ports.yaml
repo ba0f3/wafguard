@@ -1,0 +1,13 @@
+# Isolated host ports for coordinator round-2 verification (different from
+# wafguard-coordinator-verify and the earlier review projects).
+services:
+  redis:
+    ports: !override ["46379:6379"]
+  wafguard:
+    ports: !override ["42345:12345", "49090:9090", "49200:19200", "49201:19201"]
+  testorigin:
+    ports: !override ["48081:8081"]
+  coraza-spoa:
+    ports: !override ["49000:9000"]
+  haproxy:
+    ports: !override ["48080:8080", "48443:8443"]

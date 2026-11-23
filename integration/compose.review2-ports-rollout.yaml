@@ -1,0 +1,3 @@
+services:
+  haproxy-b:
+    ports: !override ["48082:8080"]

@@ -99,6 +99,25 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.Copy(w, r.Body)
 	})
+	mux.HandleFunc("/status-observe", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "status-observe-benign")
+	})
+	mux.HandleFunc("/body-inspect", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 8192))
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(b)
+	})
+	mux.HandleFunc("/missing-txn", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "missing-txn-benign-body-marker")
+	})
 	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))

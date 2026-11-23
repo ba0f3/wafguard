@@ -1,12 +1,13 @@
--- Atomic observe: dedupe by event id, verify the admission token, then update
--- bounded rolling windows. The auth hash is the single place where an auth
--- failure is joined to a WAF verdict, so a request is counted at most once.
+-- Atomic observe: dedupe by event id, verify the admission token and current
+-- policy revision, then update bounded rolling windows. The auth hash is the
+-- single place where an auth failure is joined to a WAF verdict.
 -- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode,
 -- KEYS[6]=fence, KEYS[7]=auth hash, KEYS[8]=brute zset, KEYS[9]=admission token,
--- KEYS[10]=policy revision
+-- KEYS[10]=policy revision, KEYS[11]=suppression
 -- ARGV: event_id, now_ms, waf_deny, waf_window_sec, waf_threshold, ban_ttl_sec,
 -- default_mode, admission_gen, max_age_ms, admission_at_ms, brute_window_sec,
--- brute_threshold, request_id, app, client_ip, origin_status, final_status
+-- brute_threshold, request_id, app, client_ip, origin_status, final_status,
+-- admission_rev
 if redis.call('EXISTS', KEYS[1]) == 1 then
   return {'deduped'}
 end
@@ -22,6 +23,13 @@ local admitted_at = tonumber(redis.call('HGET', KEYS[9], 'at_ms'))
 if (now - admitted_at) > max_age or admitted_at > now then
   return {'fenced', 'age'}
 end
+local token_rev = redis.call('HGET', KEYS[9], 'rev') or '0'
+if ARGV[18] ~= '' and ARGV[18] ~= token_rev then
+  return {'fenced', 'revision_argument'}
+end
+if (redis.call('GET', KEYS[10]) or '0') ~= token_rev then
+  return {'fenced', 'revision'}
+end
 if ARGV[8] ~= '' and ARGV[8] ~= token_gen then
   return {'fenced', 'generation'}
 end
@@ -30,7 +38,10 @@ if fence and fence ~= token_gen then
   return {'fenced', 'generation'}
 end
 redis.call('SET', KEYS[1], '1', 'PX', max_age)
-redis.call('PEXPIRE', KEYS[4], max_age)
+local sup = redis.call('GET', KEYS[11])
+if sup and tonumber(sup) > now then
+  return {'suppressed'}
+end
 local mode = redis.call('GET', KEYS[5]) or ARGV[7]
 local function brute_count()
   if redis.call('HGET', KEYS[7], 'outcome') ~= 'failure' then return nil end
@@ -56,8 +67,17 @@ if redis.call('EXISTS', KEYS[7]) == 1 then
     if br then return br end
   end
 end
-if ARGV[16] ~= '' then redis.call('HSET', KEYS[4], 'origin_status', ARGV[16], 'response_seen', '1') end
-if ARGV[17] ~= '' then redis.call('HSET', KEYS[4], 'final_client_status', ARGV[17]) end
+-- Status observation is opt-in; only create (and then bound) the meta hash
+-- when a status actually arrives. PEXPIRE before the HSET would be a no-op
+-- for a fresh IP and leave a permanent key.
+if ARGV[16] ~= '' then
+  redis.call('HSET', KEYS[4], 'origin_status', ARGV[16], 'response_seen', '1')
+  redis.call('PEXPIRE', KEYS[4], max_age)
+end
+if ARGV[17] ~= '' then
+  redis.call('HSET', KEYS[4], 'final_client_status', ARGV[17])
+  redis.call('PEXPIRE', KEYS[4], max_age)
+end
 if tonumber(ARGV[3]) == 1 then
   redis.call('ZADD', KEYS[2], now, ARGV[1])
   local window = tonumber(ARGV[4])

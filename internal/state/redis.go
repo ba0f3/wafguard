@@ -13,7 +13,6 @@ import (
 	"github.com/ba0f3/haproxy-waf-spoe/internal/enrich"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -135,32 +134,36 @@ func New(client redis.UniversalClient, cfg Config) (*Store, error) {
 // to every replica. The admission revision is the cache key: a policy change
 // advances it, so in-flight events from the old revision use the old rules and
 // new admissions immediately see the published config.
-func (s *Store) appCfgAt(ctx context.Context, app string, rev uint64) policy.Config {
+func (s *Store) appCfgAt(ctx context.Context, app string, rev uint64) (policy.Config, error) {
 	s.mu.RLock()
 	c, ok := s.configs[app]
 	loadedRev := s.configRev[app]
 	s.mu.RUnlock()
 	if ok && (rev == 0 || loadedRev == rev) {
-		return c
+		return c, nil
 	}
+	// A newer revision must be loaded from Redis or the operation fails closed;
+	// falling back to a cached older config would persist under wrong rules.
 	raw, err := s.client.Get(ctx, s.policyConfigKey(app)).Result()
-	if err == nil {
-		var loaded policy.Config
-		if json.Unmarshal([]byte(raw), &loaded) == nil {
-			loaded = policy.WithDefaults(loaded)
-			if policy.Validate(loaded) == nil {
-				s.mu.Lock()
-				s.configs[app] = loaded
-				s.configRev[app] = rev
-				s.mu.Unlock()
-				return loaded
-			}
+	if err != nil {
+		if err == redis.Nil {
+			return policy.Config{}, fmt.Errorf("policy config missing for revision %d", rev)
 		}
+		return policy.Config{}, err
 	}
-	if ok {
-		return c
+	var loaded policy.Config
+	if err := json.Unmarshal([]byte(raw), &loaded); err != nil {
+		return policy.Config{}, fmt.Errorf("policy config invalid: %w", err)
 	}
-	return policy.WithDefaults(s.cfg.Apps[app])
+	loaded = policy.WithDefaults(loaded)
+	if err := policy.Validate(loaded); err != nil {
+		return policy.Config{}, fmt.Errorf("policy config invalid: %w", err)
+	}
+	s.mu.Lock()
+	s.configs[app] = loaded
+	s.configRev[app] = rev
+	s.mu.Unlock()
+	return loaded, nil
 }
 
 func (s *Store) prefix(parts ...string) string {
@@ -230,8 +233,13 @@ func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, e
 	if action == event.ActionBan {
 		d.Action = event.ActionBan
 	}
-	if len(row) > 5 && fmt.Sprint(row[5]) == "suppressed" {
-		d.Explanation = "suppressed"
+	if len(row) > 5 {
+		switch fmt.Sprint(row[5]) {
+		case "suppressed":
+			d.Explanation = "suppressed"
+		case "observe-mode":
+			d.Explanation = "observe-mode"
+		}
 	}
 	return d, nil
 }
@@ -245,7 +253,10 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 	if ev.Admission != nil {
 		rev = ev.Admission.Revision
 	}
-	cfg := s.appCfgAt(ctx, app, rev)
+	cfg, err := s.appCfgAt(ctx, app, rev)
+	if err != nil {
+		return err
+	}
 	deny := 0
 	// Response observation is a separate signal. Reusing the request verdict
 	// here would count the same request twice in the deny window.
@@ -264,6 +275,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		s.modeKey(app), s.fenceKey(app), s.authKey(app, ev.Request.RequestID),
 		s.bruteKey(app, ev.Request.ClientIP),
 		s.admissionKey(app, ev.Request.RequestID), s.policyRevKey(app),
+		s.supKey(app, ev.Request.ClientIP),
 	}
 	originStatus, finalStatus := "", ""
 	if ev.OriginStatus != nil {
@@ -272,13 +284,13 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 	if ev.FinalClientStatus != nil {
 		finalStatus = strconv.Itoa(*ev.FinalClientStatus)
 	}
-	_, err := s.observeScript.Run(ctx, s.client, keys,
+	_, err = s.observeScript.Run(ctx, s.client, keys,
 		ev.ID, time.Now().UnixMilli(), deny,
 		cfg.WAFDenyWindowSec, cfg.WAFDenyThreshold, cfg.WAFDenyBanSec,
 		string(s.cfg.DefaultMode), admissionGen, cfg.MaxEventAgeSec*1000,
 		admissionAt, cfg.BruteWindowSec, cfg.BruteFailures,
 		ev.Request.RequestID, app, ev.Request.ClientIP.String(),
-		originStatus, finalStatus,
+		originStatus, finalStatus, strconv.FormatUint(rev, 10),
 	).Result()
 	return err
 }
@@ -299,60 +311,89 @@ func (s *Store) RecordAuth(ctx context.Context, receipt policy.AuthReceipt) erro
 	if err != nil {
 		return fmt.Errorf("bad admission ip %q: %w", ipStr, err)
 	}
-	revStr, _ := s.client.HGet(ctx, tokenKey, "rev").Result()
-	rev, _ := strconv.ParseUint(revStr, 10, 64)
-	cfg := s.appCfgAt(ctx, app, rev)
+	revStr, err := s.client.HGet(ctx, tokenKey, "rev").Result()
+	if err != nil {
+		return fmt.Errorf("no admission revision for auth receipt: %w", err)
+	}
+	rev, err := strconv.ParseUint(revStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("bad admission revision %q: %w", revStr, err)
+	}
+	cfg, err := s.appCfgAt(ctx, app, rev)
+	if err != nil {
+		return err
+	}
 	keys := []string{
 		s.authKey(app, receipt.RequestID), s.dedupeKey(verdictID),
 		s.bruteKey(app, ip), s.banKey(app, ip),
 		s.modeKey(app), tokenKey, s.fenceKey(app), s.metaKey(app, ip),
+		s.supKey(app, ip), s.policyRevKey(app),
 	}
-	_, err = s.recordAuthScript.Run(ctx, s.client, keys,
+	res, err := s.recordAuthScript.Run(ctx, s.client, keys,
 		string(receipt.Outcome), receipt.SourceID, time.Now().UnixMilli(),
 		cfg.BruteWindowSec, cfg.BruteFailures, cfg.WAFDenyBanSec,
 		receipt.RequestID, string(s.cfg.DefaultMode), s.cfg.AuthSource, app,
-		cfg.MaxEventAgeSec*1000, 24*60*60,
+		cfg.MaxEventAgeSec*1000, 24*60*60, ip.String(), strconv.FormatUint(rev, 10),
 	).Result()
-	return err
+	if err != nil {
+		return err
+	}
+	row, ok := res.([]interface{})
+	if !ok || len(row) < 1 {
+		return fmt.Errorf("bad auth result")
+	}
+	// Only a persisted record or a genuine duplicate is a successful write.
+	switch fmt.Sprint(row[0]) {
+	case "ok", "duplicate", "brute_banned", "suppressed":
+		return nil
+	default:
+		return fmt.Errorf("auth receipt %s: %v", fmt.Sprint(row[0]), row)
+	}
 }
 
+// Unban requires a caller-supplied, non-empty operation id: it is the
+// idempotency key. Reusing it with a different payload is a conflict.
 func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error) {
 	opID := req.OperationID
 	if opID == "" {
-		// Documented contract: an empty client id is assigned one server-side;
-		// callers must reuse the returned id for idempotent retries.
-		opID = "generated-" + uuid.NewString()
+		return UnbanResult{}, fmt.Errorf("operation_id required")
+	}
+	if req.Suppression < 0 {
+		return UnbanResult{}, fmt.Errorf("suppression must be >= 0")
 	}
 	gen := fmt.Sprintf("unban-%d", time.Now().UnixNano())
-	now := time.Now()
 	keys := []string{
 		s.unbanOpKey(opID), s.banKey(req.Application, req.ClientIP),
 		s.contribKey(req.Application, req.ClientIP), s.supKey(req.Application, req.ClientIP),
 		s.metaKey(req.Application, req.ClientIP), s.fenceKey(req.Application),
+		s.bruteKey(req.Application, req.ClientIP),
 	}
 	res, err := s.unbanScript.Run(ctx, s.client, keys,
-		opID, gen, now.UnixMilli(), req.Suppression.Milliseconds(),
+		opID, gen, time.Now().UnixMilli(), req.Suppression.Milliseconds(),
 		(24 * time.Hour).Milliseconds(), req.Application, req.ClientIP.String(),
 	).Result()
 	if err != nil {
 		return UnbanResult{}, err
 	}
 	row, ok := res.([]interface{})
-	if !ok || len(row) < 1 {
+	if !ok || len(row) < 2 {
 		return UnbanResult{}, fmt.Errorf("bad unban result")
 	}
 	resultGen := fmt.Sprint(row[0])
 	if resultGen == "conflict" {
-		return UnbanResult{}, fmt.Errorf("operation id reused for a different target")
+		return UnbanResult{}, fmt.Errorf("operation id reused with a different payload")
 	}
-	supMS, _ := strconv.ParseInt(fmt.Sprint(row[1]), 10, 64)
+	expMS, err := strconv.ParseInt(fmt.Sprint(row[1]), 10, 64)
+	if err != nil {
+		return UnbanResult{}, fmt.Errorf("bad stored suppression expiry: %w", err)
+	}
 	s.mu.Lock()
 	s.fenceGen[req.Application] = resultGen
 	s.mu.Unlock()
 	return UnbanResult{
 		Generation:      resultGen,
 		OperationID:     opID,
-		SuppressedUntil: time.UnixMilli(now.UnixMilli() + supMS),
+		SuppressedUntil: time.UnixMilli(expMS),
 	}, nil
 }
 

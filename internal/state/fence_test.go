@@ -47,7 +47,7 @@ func TestUnbanFence(t *testing.T) {
 		observeDeny(t, store, event.Decision{}, ip, fmt.Sprintf("750e8400-e29b-41d4-a716-4466554400%d", i))
 	}
 	staleAdmission, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip, RequestID: "750e8400-e29b-41d4-a716-446655440099"})
-	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip}); err != nil {
+	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip, OperationID: "op-fence"}); err != nil {
 		t.Fatal(err)
 	}
 	ev := event.Event{

@@ -56,7 +56,7 @@ func TestAdminRoles(t *testing.T) {
 	readH := admin.New(store, admin.Access{Role: admin.Read, Application: "sample_app"})
 	writeH := admin.New(store, admin.Access{Role: admin.Write, Application: "sample_app"})
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/apps/sample_app/unban", strings.NewReader(`{"client_ip":"192.0.2.8"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/apps/sample_app/unban", strings.NewReader(`{"client_ip":"192.0.2.8","operation_id":"op-admin-test"}`))
 	w := httptest.NewRecorder()
 	readH.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {

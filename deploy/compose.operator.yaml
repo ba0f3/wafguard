@@ -1,14 +1,20 @@
 # Standalone, production-shaped operator deployment.
 #
-# All SPOE traffic (wafguard check-ban, Coraza SPOA, Redis) stays on the
-# internal `spoe` network: no SPOE port is published to the host. Only the
-# lab-facing HAProxy listener, metrics and the two admin listeners are bound
-# to loopback for isolated integration validation.
+# Four separate bridges enforce the data-plane boundaries:
+#   origin   (front door, non-internal): haproxy + lab origin only
+#   spoe     (internal): haproxy + wafguard replicas + Coraza SPOA
+#   redis_net(internal): wafguard replicas + Redis only
+#   admin    (non-internal): wafguard only, loopback-published lab admin/metrics
+# SPOE listeners are bound to the spoe address, never to 0.0.0.0; admin and
+# metrics are bound to the admin address. Loopback publishing alone is not the
+# boundary -- network membership and listener addresses are.
 services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
-    networks: [spoe]
+    networks:
+      redis_net:
+        ipv4_address: 172.31.20.5
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -23,12 +29,16 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ${OPERATOR_WAFGUARD_CONFIG:-../deploy/operator/wafguard-observe.json}:/etc/wafguard/config.json:ro
+      - ${OPERATOR_WAFGUARD_CONFIG:-../deploy/operator/wafguard-isolated-observe.json}:/etc/wafguard/config.json:ro
     environment:
       - WG_CONFIG=/etc/wafguard/config.json
-    # `front` carries only loopback-lab admin/metrics; SPOE and Redis traffic
-    # stays on the internal `spoe` network.
-    networks: [front, spoe]
+    networks:
+      spoe:
+        ipv4_address: 172.31.10.10
+      redis_net:
+        ipv4_address: 172.31.20.10
+      admin:
+        ipv4_address: 172.31.30.10
     ports:
       - "127.0.0.1:${OPERATOR_METRICS_PORT:-29090}:9090"
       - "127.0.0.1:${OPERATOR_WRITE_PORT:-29200}:19200"
@@ -42,41 +52,76 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ${OPERATOR_WAFGUARD_CONFIG2:-../deploy/operator/wafguard-observe.json}:/etc/wafguard/config.json:ro
+      - ${OPERATOR_WAFGUARD_CONFIG2:-../deploy/operator/wafguard-isolated-replica.json}:/etc/wafguard/config.json:ro
     environment:
       - WG_CONFIG=/etc/wafguard/config.json
-    networks: [spoe]
+    networks:
+      spoe:
+        ipv4_address: 172.31.10.11
+      redis_net:
+        ipv4_address: 172.31.20.11
+      admin:
+        ipv4_address: 172.31.30.11
 
   coraza-spoa:
     image: ghcr.io/corazawaf/coraza-spoa:0.9.1
     volumes:
       - ${OPERATOR_CORAZA_CONFIG:-../deploy/operator/coraza-spoa.yaml}:/config.yaml:ro
-    networks: [spoe]
+    networks:
+      spoe:
+        ipv4_address: 172.31.10.20
 
   coraza-spoa-b:
     image: ghcr.io/corazawaf/coraza-spoa:0.9.1
     volumes:
       - ${OPERATOR_CORAZA_CONFIG:-../deploy/operator/coraza-spoa.yaml}:/config.yaml:ro
-    networks: [spoe]
+    networks:
+      spoe:
+        ipv4_address: 172.31.10.21
 
   haproxy:
     image: ${OPERATOR_HAPROXY_IMAGE:-haproxy:3.2.0}
     depends_on: [wafguard, wafguard2, coraza-spoa, coraza-spoa-b, testorigin]
     volumes:
       - ${OPERATOR_HAPROXY_DIR:-../deploy/operator/haproxy}:/usr/local/etc/haproxy:ro
-    networks: [front, spoe]
+    networks:
+      origin:
+        ipv4_address: 172.31.40.2
+      spoe:
+        ipv4_address: 172.31.10.2
     ports:
       - "127.0.0.1:${OPERATOR_HAPROXY_PORT:-28080}:8080"
 
   # Benign lab stand-in for the operator's origin; replace with the real origin
-  # (and drop this service) in production.
+  # (and drop this service) in production. It has no SPOE or Redis connectivity.
   testorigin:
     build:
       context: ..
       dockerfile: integration/images/testorigin.Dockerfile
-    networks: [front]
+    networks:
+      origin:
+        ipv4_address: 172.31.40.3
 
 networks:
-  front: {}
+  origin:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.40.0/24
   spoe:
+    driver: bridge
     internal: true
+    ipam:
+      config:
+        - subnet: 172.31.10.0/24
+  redis_net:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.20.0/24
+  admin:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.30.0/24
