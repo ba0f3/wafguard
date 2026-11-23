@@ -1,5 +1,5 @@
 -- Atomic observe: dedupe by event id, update rolling windows, maybe ban.
--- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode, KEYS[6]=fence gen
+-- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode, KEYS[6]=fence gen, KEYS[7]=auth hash (may be empty)
 -- ARGV: event_id, now_ms, waf_deny (0/1), window_sec, ban_ttl_sec, threshold, mode, admission_gen, max_event_age_ms, admission_at_ms
 if redis.call('EXISTS', KEYS[1]) == 1 then
   return {'deduped'}
@@ -15,6 +15,12 @@ if fence and ARGV[8] ~= '' and fence ~= ARGV[8] then
   return {'fenced', 'generation'}
 end
 redis.call('SET', KEYS[1], '1', 'EX', max_age)
+if redis.call('EXISTS', KEYS[7]) == 1 then
+  local outcome = redis.call('HGET', KEYS[7], 'outcome')
+  if outcome and redis.call('HSETNX', KEYS[7], 'joined', '1') == 1 then
+    redis.call('HSET', KEYS[7], 'joined_at_ms', ARGV[2])
+  end
+end
 local waf_deny = tonumber(ARGV[3])
 if waf_deny == 1 then
   redis.call('ZADD', KEYS[2], now, ARGV[1])

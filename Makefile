@@ -2,7 +2,7 @@ HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
+.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -82,6 +82,27 @@ it-failover:
 	docker compose $(COMPOSE_FAILOVER) up -d --build wafguard haproxy redis-replica redis-sentinel
 	sleep 4
 	WAF_FAILOVER=1 WAF_INTEGRATION=1 SENTINEL_ADDR=$${SENTINEL_ADDR:-127.0.0.1:26379} go test -tags=integration ./integration -run '^TestSentinelFailover' -count=1
+	docker compose $(COMPOSE_FAILOVER) down
+	docker compose -f integration/compose.yaml up -d --force-recreate redis wafguard haproxy
+
+it-observe-mode:
+	WAF_OBSERVE_MODE=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockBehaviorModeObserve' -count=1
+
+it-enrich-native: compose-enrich-up
+	sleep 6
+	WAF_ENRICH_NATIVE=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestEnrichmentNativeStock' -count=1
+
+it-response:
+	WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestObserveResponse' -count=1
+
+it-transport:
+	WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockCorazaTransport' -count=1
+
+it-scanner:
+	WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestScannerProbe' -count=1
+
+it-auth-redis:
+	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} go test -tags=integration ./internal/state -run '^TestAuthJoinRealRedis' -count=1
 
 compose-failover-up:
 	docker compose $(COMPOSE_FAILOVER) up -d --build wafguard haproxy redis-replica redis-sentinel

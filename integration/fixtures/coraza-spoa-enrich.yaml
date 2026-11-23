@@ -1,11 +1,11 @@
 bind: 0.0.0.0:9000
-log_level: debug
+log_level: info
 log_file: /shared/coraza.jsonl
 log_format: json
 default_application: sample_app
 applications:
   - name: sample_app
-    log_level: debug
+    log_level: info
     log_file: /shared/coraza.jsonl
     log_format: json
     directives: |

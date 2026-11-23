@@ -33,6 +33,17 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestClassifyEnforcementRequiresSource(t *testing.T) {
+	cfg := policy.DefaultConfig()
+	ev := event.Event{
+		RequestWAF: event.Verdict{Action: "deny", Source: ""},
+	}
+	e := policy.Classify(ev, cfg)
+	if e.WAFDeny {
+		t.Fatal("deny without enforced source must not count")
+	}
+}
+
 func TestClassifyProbeAnd4xx(t *testing.T) {
 	cfg := policy.DefaultConfig()
 	ev := event.Event{

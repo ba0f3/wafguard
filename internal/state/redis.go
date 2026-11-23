@@ -30,6 +30,7 @@ type Store struct {
 	cfg        Config
 	checkSHA   string
 	observeSHA string
+	recordAuthSHA string
 	enrichSHA  string
 	mu         sync.RWMutex
 	fenceGen   map[string]string // app -> generation
@@ -89,6 +90,14 @@ func New(client redis.UniversalClient, cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	recordAuthSrc, err := scriptsFS.ReadFile("scripts/record_auth.lua")
+	if err != nil {
+		return nil, err
+	}
+	recordAuthSHA, err := client.ScriptLoad(context.Background(), string(recordAuthSrc)).Result()
+	if err != nil {
+		return nil, err
+	}
 	enrichSrc, err := scriptsFS.ReadFile("scripts/enrich.lua")
 	if err != nil {
 		return nil, err
@@ -102,6 +111,7 @@ func New(client redis.UniversalClient, cfg Config) (*Store, error) {
 		cfg:        cfg,
 		checkSHA:   checkSHA,
 		observeSHA: observeSHA,
+		recordAuthSHA: recordAuthSHA,
 		enrichSHA:  enrichSHA,
 		fenceGen:   map[string]string{},
 	}
@@ -141,6 +151,10 @@ func (s *Store) modeKey(app string) string {
 
 func (s *Store) supKey(app string, ip netip.Addr) string {
 	return s.prefix("sup", app, ip.String())
+}
+
+func (s *Store) authKey(app, requestID string) string {
+	return s.prefix("auth", app, requestID)
 }
 
 func (s *Store) dedupeKey(eventID string) string {
@@ -224,6 +238,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		s.metaKey(ev.Request.Application, ev.Request.ClientIP),
 		s.modeKey(ev.Request.Application),
 		s.fenceKey(ev.Request.Application),
+		s.authKey(ev.Request.Application, ev.Request.RequestID),
 	}
 	_, err := s.client.EvalSha(ctx, s.observeSHA, keys,
 		ev.ID,
@@ -241,11 +256,17 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 }
 
 func (s *Store) RecordAuth(ctx context.Context, receipt policy.AuthReceipt) error {
-	key := s.prefix("auth", receipt.Application, receipt.RequestID)
-	return s.client.HSet(ctx, key, map[string]interface{}{
-		"outcome": string(receipt.Outcome),
-		"source":  receipt.SourceID,
-	}).Err()
+	verdictID := event.EventID(receipt.Application, receipt.RequestID, event.KindWafVerdict)
+	keys := []string{
+		s.authKey(receipt.Application, receipt.RequestID),
+		s.dedupeKey(verdictID),
+	}
+	_, err := s.client.EvalSha(ctx, s.recordAuthSHA, keys,
+		string(receipt.Outcome),
+		receipt.SourceID,
+		strconv.FormatInt(time.Now().UnixMilli(), 10),
+	).Result()
+	return err
 }
 
 func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error) {

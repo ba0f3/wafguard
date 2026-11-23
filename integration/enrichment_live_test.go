@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,5 +94,38 @@ func TestEnrichmentSyntheticTailIngest(t *testing.T) {
 	n, err := cli.Exists(ctx, key).Result()
 	if err != nil || n != 1 {
 		t.Fatalf("dedupe want 1 key got %d", n)
+	}
+}
+
+// TestEnrichmentNativeStockJSON tails zerolog match lines from stock coraza-spoa json log_format.
+func TestEnrichmentNativeStockJSON(t *testing.T) {
+	if os.Getenv("WAF_ENRICH_NATIVE") == "" {
+		t.Skip("set WAF_ENRICH_NATIVE=1 with compose.enrich.yaml json logging")
+	}
+	requireCompose(t)
+	req, _ := http.NewRequest(http.MethodGet, haproxyURL()+"/ok", nil)
+	req.Header.Set("User-Agent", "fixture-deny-request")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("deny %d", resp.StatusCode)
+	}
+	out, err := exec.Command("docker", "compose", "-f", "integration/compose.yaml", "-f", "integration/compose.enrich.yaml", "exec", "-T", "wafguard", "grep", "match", "/shared/coraza.jsonl").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "rule_id") {
+		t.Fatalf("no stock match json in log: %s err %v", out, err)
+	}
+	line := bytes.NewReader(out)
+	if i := bytes.Index(out, []byte("{\"level\"")); i >= 0 {
+		if j := bytes.Index(out[i:], []byte("\n")); j > 0 {
+			line = bytes.NewReader(out[i : i+j])
+		} else {
+			line = bytes.NewReader(out[i:])
+		}
+	}
+	if _, err := enrich.Parse(line, enrich.Source{Application: "sample_app"}, enrich.Limits{}); err != nil {
+		t.Fatalf("parse stock line: %v", err)
 	}
 }

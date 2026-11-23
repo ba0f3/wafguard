@@ -127,6 +127,20 @@ func TestStockLifecycle(t *testing.T) {
 			t.Fatalf("%s status %d want %d", tc.path, r.StatusCode, tc.want)
 		}
 	}
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err = client.Get(haproxyURL() + "/marker-redirect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 302 {
+		t.Fatalf("redirect status %d want 302", resp.StatusCode)
+	}
 }
 
 func TestStockParallelHttp11(t *testing.T) {

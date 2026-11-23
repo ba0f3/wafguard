@@ -90,6 +90,9 @@ func TestRolloutSharedState(t *testing.T) {
 	}
 	ip := labClientIP(t)
 	_ = c.Del(ctx, "wg:ban:sample_app:"+ip, "wg:contrib:sample_app:"+ip)
+	if err := c.Set(ctx, "wg:mode:sample_app", "enforce", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 3; i++ {
 		corazaDeny(t, haproxyURL())
 	}

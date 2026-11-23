@@ -2,3 +2,6 @@ services:
   coraza-spoa:
     volumes:
       - ./fixtures/coraza-spoa-detectonly.yaml:/config.yaml:ro
+  haproxy:
+    volumes:
+      - ../deploy/haproxy/haproxy-detectonly.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro

@@ -2,19 +2,20 @@
 
 **Branch:** `ba0f3/waf-spoe-implementation`
 
-## Gates (this session)
+## Closed this session (orchestration msg)
 
-| Command | Result |
-|---------|--------|
-| Stock 3.2 / 3.4 | **PASS** |
-| `it-stock-provenance` | **PASS** enforced deny + origin 403 negative |
-| `it-detectonly` / `it-nomarker` | **PASS** |
-| Rollout + unban (`TestHTTPUnbanHeldAdmissionRelease`) | **PASS** |
-| `it-enrich-synthetic` | **PASS** (labeled synthetic) |
-| `it-failover` | **PASS** |
+| Item | Evidence |
+|------|----------|
+| Configured enforcement guard | `behavior_mode` → `snap_source`; policy `enforced` only |
+| redirect / transport error | `TestStockLifecycle`, `TestStockCorazaTransportError` |
+| observe-response | `TestObserveResponsePhase`, scanner probe IT |
+| Auth join (both orders, dup, real Redis) | `record_auth.lua`, `TestAuthReceipt*`, `TestAuthJoinRealRedis` |
+| Native stock JSON enrich | `TestEnrichmentNativeStockJSON`, zerolog parser |
+| Failover → clean base stack | `Makefile` `it-failover` down + recreate redis |
+| Synthetic vs native enrich labels | `it-enrich-synthetic` vs `it-enrich-native` |
 
-## Still open vs plan
+## Still open
 
-- Full stock table rows (redirect, response-phase, transport error disconnect)
-- Native Coraza match JSON on shared volume (0.9.1 agent logs only — documented)
-- Auth brute/scanner integration beyond unit receipt test
+- Full stock assertion table (drop, body, affinity, coraza-res response deny)
+- Brute-force ban from auth outcomes (join exists; no brute zset yet)
+- HTTP admin `auth-outcomes` integration (no auth listener in default compose)

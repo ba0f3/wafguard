@@ -13,6 +13,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func enforceLabMode(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: redisAddr()})
+	if err := c.Set(ctx, "wg:mode:sample_app", "enforce", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func contribCount(t *testing.T) int64 {
 	t.Helper()
 	ctx := context.Background()
@@ -76,6 +85,7 @@ func lastRecorderVerdict(t *testing.T) (action, source string) {
 func TestStockVerdictEnforcedPositive(t *testing.T) {
 	requireRecorder(t)
 	clearClientBanState(t)
+	enforceLabMode(t)
 	before := contribCount(t)
 
 	req, _ := http.NewRequest(http.MethodGet, haproxyURL()+"/ok", nil)
@@ -113,6 +123,32 @@ func TestStockVerdictOrigin403NoContrib(t *testing.T) {
 	}
 	if contribCount(t) != before {
 		t.Fatalf("origin 403 must not add WAF deny contrib")
+	}
+}
+
+func TestStockBehaviorModeObserveNoBan(t *testing.T) {
+	if os.Getenv("WAF_OBSERVE_MODE") == "" {
+		t.Skip("set WAF_OBSERVE_MODE=1 with default observe wafguard compose")
+	}
+	requireCompose(t)
+	clearClientBanState(t)
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: redisAddr()})
+	ip := labClientIP(t)
+	for i := 0; i < 3; i++ {
+		req, _ := http.NewRequest(http.MethodGet, haproxyURL()+"/ok", nil)
+		req.Header.Set("User-Agent", "fixture-deny-request")
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Body.Close()
+		if r.StatusCode != 403 {
+			t.Fatalf("deny status %d", r.StatusCode)
+		}
+	}
+	if ban, _ := c.Get(ctx, "wg:ban:sample_app:"+ip).Result(); ban != "" {
+		t.Fatalf("observe mode must not ban, got %q", ban)
 	}
 }
 

@@ -97,6 +97,87 @@ func TestSharedBan(t *testing.T) {
 	}
 }
 
+func TestAuthReceiptJoinBothOrders(t *testing.T) {
+	store, mr := testStore(t)
+	ctx := context.Background()
+
+	rid := "550e8400-e29b-41d4-a716-446655440020"
+	key := "test:auth:sample_app:" + rid
+	if err := store.RecordAuth(ctx, policy.AuthReceipt{
+		Application: "sample_app",
+		RequestID:   rid,
+		Outcome:     policy.AuthFailure,
+		SourceID:    "login",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ev := event.Event{
+		Request:    event.Request{Application: "sample_app", RequestID: rid, ClientIP: netip.MustParseAddr("192.0.2.1")},
+		ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
+		Kind:       event.KindWafVerdict,
+		RequestWAF: event.Verdict{Action: "allow", Source: "enforced"},
+	}
+	d, _ := store.Check(ctx, ev.Request)
+	ev.Admission = d.Admission
+	if err := store.Observe(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if o := mr.HGet(key, "outcome"); o != "failure" {
+		t.Fatalf("auth before observe join outcome %q", o)
+	}
+	if j := mr.HGet(key, "joined"); j != "1" {
+		t.Fatalf("auth before observe joined %q", j)
+	}
+
+	rid2 := "550e8400-e29b-41d4-a716-446655440021"
+	key2 := "test:auth:sample_app:" + rid2
+	ev2 := event.Event{
+		Request:    event.Request{Application: "sample_app", RequestID: rid2, ClientIP: netip.MustParseAddr("192.0.2.2")},
+		ID:         event.EventID("sample_app", rid2, event.KindWafVerdict),
+		Kind:       event.KindWafVerdict,
+		RequestWAF: event.Verdict{Action: "allow", Source: "enforced"},
+	}
+	d2, _ := store.Check(ctx, ev2.Request)
+	ev2.Admission = d2.Admission
+	if err := store.Observe(ctx, ev2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAuth(ctx, policy.AuthReceipt{
+		Application: "sample_app",
+		RequestID:   rid2,
+		Outcome:     policy.AuthSuccess,
+		SourceID:    "login",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if o := mr.HGet(key2, "outcome"); o != "success" {
+		t.Fatalf("observe before auth join outcome %q", o)
+	}
+	if j := mr.HGet(key2, "joined"); j != "1" {
+		t.Fatalf("observe before auth joined %q", j)
+	}
+}
+
+func TestAuthReceiptDuplicateRejected(t *testing.T) {
+	store, mr := testStore(t)
+	ctx := context.Background()
+	rid := "550e8400-e29b-41d4-a716-446655440012"
+	key := "test:auth:sample_app:" + rid
+	if err := store.RecordAuth(ctx, policy.AuthReceipt{
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure, SourceID: "login",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAuth(ctx, policy.AuthReceipt{
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthSuccess, SourceID: "login",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if o := mr.HGet(key, "outcome"); o != "failure" {
+		t.Fatalf("duplicate must keep first outcome %q", o)
+	}
+}
+
 func TestAuthReceiptStoredOnce(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()

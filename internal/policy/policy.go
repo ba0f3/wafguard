@@ -114,10 +114,7 @@ func Classify(e event.Event, cfg Config) Evidence {
 		return ev
 	}
 	action := strings.ToLower(v.Action)
-	if action == "deny" || action == "drop" {
-		ev.WAFDeny = v.Source == "enforced" || v.Source == "" || action == "deny" || action == "drop"
-	}
-	if v.Source == "enforced" && (action == "deny" || action == "drop") && !v.InspectionError {
+	if (action == "deny" || action == "drop") && v.Source == "enforced" {
 		ev.WAFDeny = true
 	}
 	for _, probe := range cfg.ProbePaths {
