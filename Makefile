@@ -2,7 +2,7 @@ HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-brute it-coraza-res it-recorder-body it-recorder-body-all it-gate-sequence compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
+.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-gate-sequence compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -40,7 +40,7 @@ it-recorder-body:
 	docker compose $(COMPOSE_RECORDER_BODY) $(if $(filter 3.4,$(HAPROXY_SERIES)),-f integration/compose.haproxy34.yaml,) up -d --build --force-recreate haproxy coraza-spoa coraza-spoa-b testorigin recorder
 	sleep 6
 	docker compose $(COMPOSE_RECORDER_BODY) $(if $(filter 3.4,$(HAPROXY_SERIES)),-f integration/compose.haproxy34.yaml,) exec -T haproxy haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
-	WAF_RECORDER_BODY=1 WAF_INTEGRATION=1 WAF_RECORDER=1 HAPROXY_PORT=18080 go test -tags=integration ./integration -run '^TestStockBody' -count=1
+	WAF_RECORDER_BODY=1 WAF_INTEGRATION=1 WAF_RECORDER=1 HAPROXY_PORT=18080 go test -tags=integration ./integration -run '^TestStockBody|^TestStockRecorderDisconnect|^TestStockDualCoraza' -count=1
 
 it-recorder-body-all:
 	$(MAKE) it-recorder-body HAPROXY_SERIES=3.2
@@ -129,6 +129,15 @@ it-coraza-res:
 	sleep 5
 	WAF_CORAZA_RES=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockCorazaResponse|^TestStockResponseBody' -count=1
 	$(MAKE) it-coraza-res-34
+	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa testorigin haproxy
+
+COMPOSE_PHASE4 := -f integration/compose.yaml -f integration/compose.responseinspect.yaml -f integration/compose.phase4only.yaml
+
+it-phase4-only:
+	docker compose -f integration/compose.yaml build testorigin
+	docker compose $(COMPOSE_PHASE4) up -d --build --force-recreate coraza-spoa testorigin haproxy
+	sleep 5
+	WAF_PHASE4_ONLY=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockResponseBodyPhase4Only' -count=1 -v
 	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa testorigin haproxy
 
 it-coraza-res-34:

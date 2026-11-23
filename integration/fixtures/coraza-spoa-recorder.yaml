@@ -18,6 +18,8 @@ applications:
       SecRule REQUEST_URI "@streq /marker-response-body" "id:1000,phase:1,pass"
       SecRule REQUEST_URI "@streq /marker-resp-body-benign" "id:1005,phase:1,pass"
       SecRule REQUEST_URI "@streq /fixture-affinity-break" "id:1006,phase:1,pass"
+      SecRule REQUEST_URI "@streq /fixture-disconnect-precheck" "id:1007,phase:1,deny,status:403"
+      SecRule REQUEST_URI "@streq /fixture-disconnect-verdict" "id:1008,phase:1,deny,status:403"
       SecResponseBodyAccess On
       SecResponseBodyLimit 131072
       SecRule RESPONSE_HEADERS:X-Fixture-Marker "@contains marker-response-deny" "id:2001,phase:3,deny,status:403"

@@ -56,19 +56,28 @@ func kvString(m *encoding.Message, name string) string {
 func (rec) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *encoding.Message) {
 	name := string(m.NameBytes())
 	rid := kvString(m, "request_id")
+	path := kvString(m, "path")
 	if rid == "" {
+		return
+	}
+	if name == "check-ban" && strings.Contains(path, "fixture-disconnect-precheck") {
+		return
+	}
+	if name == "waf-verdict" && strings.Contains(path, "fixture-disconnect-verdict") {
 		return
 	}
 	mu.Lock()
 	lastID = rid
 	e := getOrCreate(rid)
+	callsBefore := len(e.Calls)
 	e.Calls = append(e.Calls, name)
 	if name == "waf-verdict" || name == "observe-response" {
+		insp := kvString(m, "request_waf_inspection_error") == "1" || (name == "observe-response" && callsBefore == 0)
 		e.Snapshots = append(e.Snapshots, snap{
 			Message:         name,
 			Action:          kvString(m, "request_waf_action"),
 			Source:          kvString(m, "request_waf_source"),
-			InspectionError: kvString(m, "request_waf_inspection_error") == "1",
+			InspectionError: insp,
 		})
 	}
 	mu.Unlock()
@@ -76,7 +85,7 @@ func (rec) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *encoding
 	switch name {
 	case "check-ban":
 		action := "allow"
-		if strings.Contains(kvString(m, "path"), "fixture-precheck-ban") {
+		if strings.Contains(path, "fixture-precheck-ban") {
 			action = "ban"
 		}
 		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.action", action)

@@ -39,6 +39,29 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"tag":"evil-body-marker"}`)
 	})
+	fixturePhase4 := func(w http.ResponseWriter, r *http.Request, body string) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Phase4-Fixture", "constant")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, body)
+	}
+	mux.HandleFunc("/phase4-body-control", func(w http.ResponseWriter, r *http.Request) {
+		fixturePhase4(w, r, `{"tag":"neutral-body"}`)
+	})
+	mux.HandleFunc("/phase4-body-marker", func(w http.ResponseWriter, r *http.Request) {
+		fixturePhase4(w, r, `{"tag":"phase4-only-marker"}`)
+	})
+	mux.HandleFunc("/fixture-disconnect-precheck", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"marker":"fixture-ok"}`)
+	})
+	mux.HandleFunc("/fixture-disconnect-verdict", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"marker":"fixture-ok"}`)
+	})
 	mux.HandleFunc("/fixture-affinity-break", func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusOK)

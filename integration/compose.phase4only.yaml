@@ -1,0 +1,4 @@
+services:
+  coraza-spoa:
+    volumes:
+      - ./fixtures/coraza-spoa-phase4only.yaml:/config.yaml:ro

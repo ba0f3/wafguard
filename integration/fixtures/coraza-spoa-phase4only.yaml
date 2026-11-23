@@ -1,0 +1,19 @@
+bind: 0.0.0.0:9000
+log_level: info
+log_file: /dev/stdout
+log_format: console
+default_application: sample_app
+applications:
+  - name: sample_app
+    log_level: info
+    log_file: /dev/stdout
+    log_format: console
+    directives: |
+      SecRuleEngine On
+      SecRule REQUEST_URI "@streq /phase4-body-control" "id:1005,phase:1,pass"
+      SecRule REQUEST_URI "@streq /phase4-body-marker" "id:1006,phase:1,pass"
+      SecResponseBodyAccess On
+      SecResponseBodyLimit 131072
+      SecRule RESPONSE_BODY "@contains phase4-only-marker" "id:4001,phase:4,deny,status:403"
+    response_check: true
+    transaction_ttl_ms: 60000
