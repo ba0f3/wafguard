@@ -1,6 +1,6 @@
 -- Atomic observe: dedupe by event id, update rolling windows, maybe ban.
--- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode, KEYS[6]=fence gen, KEYS[7]=auth hash (may be empty)
--- ARGV: event_id, now_ms, waf_deny (0/1), window_sec, ban_ttl_sec, threshold, mode, admission_gen, max_event_age_ms, admission_at_ms
+-- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode, KEYS[6]=fence gen, KEYS[7]=auth hash, KEYS[8]=brute zset
+-- ARGV: event_id, now_ms, waf_deny, waf_window, ban_ttl, waf_threshold, mode, admission_gen, max_age_ms, admission_at_ms, brute_window, brute_threshold, request_id
 if redis.call('EXISTS', KEYS[1]) == 1 then
   return {'deduped'}
 end
@@ -15,10 +15,36 @@ if fence and ARGV[8] ~= '' and fence ~= ARGV[8] then
   return {'fenced', 'generation'}
 end
 redis.call('SET', KEYS[1], '1', 'EX', max_age)
+local function maybe_brute(now)
+  if redis.call('EXISTS', KEYS[7]) ~= 1 then
+    return
+  end
+  local outcome = redis.call('HGET', KEYS[7], 'outcome')
+  if outcome ~= 'failure' then
+    return
+  end
+  if redis.call('HSETNX', KEYS[7], 'brute_counted', '1') ~= 1 then
+    return
+  end
+  redis.call('ZADD', KEYS[8], now, ARGV[13])
+  local bwin = tonumber(ARGV[11])
+  redis.call('ZREMRANGEBYSCORE', KEYS[8], 0, now - (bwin * 1000))
+  local bcount = redis.call('ZCARD', KEYS[8])
+  local bthresh = tonumber(ARGV[12])
+  local mode = redis.call('GET', KEYS[5]) or ARGV[7]
+  if bcount >= bthresh and mode == 'enforce' then
+    local ban_ttl = tonumber(ARGV[6])
+    local exp = now + (ban_ttl * 1000)
+    redis.call('SET', KEYS[3], exp, 'PX', ban_ttl * 1000)
+    return {'brute_banned', bcount, exp}
+  end
+end
 if redis.call('EXISTS', KEYS[7]) == 1 then
   local outcome = redis.call('HGET', KEYS[7], 'outcome')
   if outcome and redis.call('HSETNX', KEYS[7], 'joined', '1') == 1 then
     redis.call('HSET', KEYS[7], 'joined_at_ms', ARGV[2])
+    local br = maybe_brute(now)
+    if br then return br end
   end
 end
 local waf_deny = tonumber(ARGV[3])

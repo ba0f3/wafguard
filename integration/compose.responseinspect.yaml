@@ -1,0 +1,4 @@
+services:
+  coraza-spoa:
+    volumes:
+      - ./fixtures/coraza-spoa-response.yaml:/config.yaml:ro

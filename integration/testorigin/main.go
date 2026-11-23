@@ -22,6 +22,12 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, `{"marker":"fixture-ok"}`)
 	})
+	mux.HandleFunc("/marker-response-body", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("X-Fixture-Marker", "marker-response-deny")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"marker":"marker-response-deny"}`)
+	})
 	mux.HandleFunc("/echo", func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))

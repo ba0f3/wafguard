@@ -1,21 +1,16 @@
-# P0 task reconciliation (plan 2026-11-23)
+# P0 task reconciliation (msg three remaining gates)
 
 **Branch:** `ba0f3/waf-spoe-implementation`
 
-## Closed this session (orchestration msg)
+| Item | Status | Evidence |
+|------|--------|----------|
+| Brute 9 vs 10 + dup/out-of-order Redis | **PASS** | `make it-brute`, `TestBruteForceNineVersusTenRealRedis` |
+| coraza-res sync 3.2 / 3.4 | **PASS** | `make it-coraza-res`, `TestStockCorazaResponseSyncDeny` |
+| Stock drop | **PASS** | `TestStockDropRequest` in `it-stock` |
+| Failover → stock → rollout | **PASS** | `make it-gate-sequence` (after `res_insp` guard) |
 
-| Item | Evidence |
-|------|----------|
-| Configured enforcement guard | `behavior_mode` → `snap_source`; policy `enforced` only |
-| redirect / transport error | `TestStockLifecycle`, `TestStockCorazaTransportError` |
-| observe-response | `TestObserveResponsePhase`, scanner probe IT |
-| Auth join (both orders, dup, real Redis) | `record_auth.lua`, `TestAuthReceipt*`, `TestAuthJoinRealRedis` |
-| Native stock JSON enrich | `TestEnrichmentNativeStockJSON`, zerolog parser |
-| Failover → clean base stack | `Makefile` `it-failover` down + recreate redis |
-| Synthetic vs native enrich labels | `it-enrich-synthetic` vs `it-enrich-native` |
+## Unresolved (honest)
 
-## Still open
-
-- Full stock assertion table (drop, body, affinity, coraza-res response deny)
-- Brute-force ban from auth outcomes (join exists; no brute zset yet)
-- HTTP admin `auth-outcomes` integration (no auth listener in default compose)
+- Plan table body/affinity, recorder disconnect cases
+- Brute throttle vs ban policy (lab uses shared ban TTL)
+- HTTP admin auth-outcomes IT (no auth listener in default compose)

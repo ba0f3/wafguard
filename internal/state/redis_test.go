@@ -108,6 +108,7 @@ func TestAuthReceiptJoinBothOrders(t *testing.T) {
 		RequestID:   rid,
 		Outcome:     policy.AuthFailure,
 		SourceID:    "login",
+		ClientIP:    netip.MustParseAddr("192.0.2.1"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +148,7 @@ func TestAuthReceiptJoinBothOrders(t *testing.T) {
 		RequestID:   rid2,
 		Outcome:     policy.AuthSuccess,
 		SourceID:    "login",
+		ClientIP:    netip.MustParseAddr("192.0.2.2"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -164,12 +166,12 @@ func TestAuthReceiptDuplicateRejected(t *testing.T) {
 	rid := "550e8400-e29b-41d4-a716-446655440012"
 	key := "test:auth:sample_app:" + rid
 	if err := store.RecordAuth(ctx, policy.AuthReceipt{
-		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure, SourceID: "login",
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure, SourceID: "login", ClientIP: netip.MustParseAddr("192.0.2.3"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordAuth(ctx, policy.AuthReceipt{
-		Application: "sample_app", RequestID: rid, Outcome: policy.AuthSuccess, SourceID: "login",
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthSuccess, SourceID: "login", ClientIP: netip.MustParseAddr("192.0.2.3"),
 	}); err != nil {
 		t.Fatal(err)
 	}

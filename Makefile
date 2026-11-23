@@ -2,7 +2,7 @@ HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
+.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-brute it-coraza-res it-gate-sequence compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -103,6 +103,34 @@ it-scanner:
 
 it-auth-redis:
 	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} go test -tags=integration ./internal/state -run '^TestAuthJoinRealRedis' -count=1
+
+it-brute:
+	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} go test -tags=integration ./internal/state -run '^TestBruteForce' -count=1
+
+COMPOSE_RES := -f integration/compose.yaml -f integration/compose.responseinspect.yaml
+
+it-coraza-res:
+	docker compose -f integration/compose.yaml build testorigin
+	docker compose $(COMPOSE_RES) up -d --build --force-recreate coraza-spoa testorigin haproxy
+	sleep 5
+	WAF_CORAZA_RES=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockCorazaResponse' -count=1
+	$(MAKE) it-coraza-res-34
+	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa testorigin haproxy
+
+it-coraza-res-34:
+	docker compose -f integration/compose.yaml -f integration/compose.haproxy34.yaml -f integration/compose.responseinspect.yaml up -d --force-recreate coraza-spoa testorigin haproxy
+	sleep 5
+	WAF_CORAZA_RES=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockCorazaResponse' -count=1
+
+it-gate-sequence:
+	$(MAKE) it-failover
+	docker compose -f integration/compose.yaml up -d --force-recreate redis wafguard haproxy coraza-spoa testorigin
+	sleep 4
+	$(MAKE) it-stock HAPROXY_SERIES=3.2
+	$(MAKE) it-stock HAPROXY_SERIES=3.4
+	docker compose $(COMPOSE_ROLLOUT) up -d --build wafguard wafguard2 haproxy haproxy-b
+	sleep 3
+	$(MAKE) it-rollout it-unban-race
 
 compose-failover-up:
 	docker compose $(COMPOSE_FAILOVER) up -d --build wafguard haproxy redis-replica redis-sentinel

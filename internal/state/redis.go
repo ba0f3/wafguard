@@ -157,6 +157,10 @@ func (s *Store) authKey(app, requestID string) string {
 	return s.prefix("auth", app, requestID)
 }
 
+func (s *Store) bruteKey(app string, ip netip.Addr) string {
+	return s.prefix("brute", app, ip.String())
+}
+
 func (s *Store) dedupeKey(eventID string) string {
 	return s.prefix("dedupe", eventID)
 }
@@ -239,6 +243,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		s.modeKey(ev.Request.Application),
 		s.fenceKey(ev.Request.Application),
 		s.authKey(ev.Request.Application, ev.Request.RequestID),
+		s.bruteKey(ev.Request.Application, ev.Request.ClientIP),
 	}
 	_, err := s.client.EvalSha(ctx, s.observeSHA, keys,
 		ev.ID,
@@ -251,21 +256,40 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		admissionGen,
 		strconv.Itoa(cfg.MaxEventAgeSec*1000),
 		strconv.FormatInt(admissionAt, 10),
+		strconv.Itoa(cfg.BruteWindowSec),
+		strconv.Itoa(cfg.BruteFailures),
+		ev.Request.RequestID,
 	).Result()
 	return err
 }
 
 func (s *Store) RecordAuth(ctx context.Context, receipt policy.AuthReceipt) error {
 	verdictID := event.EventID(receipt.Application, receipt.RequestID, event.KindWafVerdict)
+	cfg := s.appCfg(receipt.Application)
 	keys := []string{
 		s.authKey(receipt.Application, receipt.RequestID),
 		s.dedupeKey(verdictID),
 	}
-	_, err := s.client.EvalSha(ctx, s.recordAuthSHA, keys,
+	args := []interface{}{
 		string(receipt.Outcome),
 		receipt.SourceID,
 		strconv.FormatInt(time.Now().UnixMilli(), 10),
-	).Result()
+		strconv.Itoa(cfg.BruteWindowSec),
+		strconv.Itoa(cfg.BruteFailures),
+		strconv.Itoa(cfg.WAFDenyBanSec),
+		receipt.RequestID,
+		string(s.cfg.DefaultMode),
+	}
+	ip := receipt.ClientIP
+	if !ip.IsValid() {
+		ip = netip.IPv4Unspecified()
+	}
+	keys = append(keys,
+		s.bruteKey(receipt.Application, ip),
+		s.banKey(receipt.Application, ip),
+		s.modeKey(receipt.Application),
+	)
+	_, err := s.client.EvalSha(ctx, s.recordAuthSHA, keys, args...).Result()
 	return err
 }
 

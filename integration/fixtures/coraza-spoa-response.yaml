@@ -1,0 +1,16 @@
+bind: 0.0.0.0:9000
+log_level: info
+log_file: /dev/stdout
+log_format: console
+default_application: sample_app
+applications:
+  - name: sample_app
+    log_level: info
+    log_file: /dev/stdout
+    log_format: console
+    directives: |
+      SecRuleEngine On
+      SecRule REQUEST_URI "@streq /marker-response-body" "id:1000,phase:1,pass"
+      SecRule RESPONSE_HEADERS:X-Fixture-Marker "@contains marker-response-deny" "id:2001,phase:3,deny,status:403"
+    response_check: true
+    transaction_ttl_ms: 60000

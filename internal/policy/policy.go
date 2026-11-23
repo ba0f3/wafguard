@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"net/netip"
+
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 )
 
@@ -19,6 +21,7 @@ type AuthReceipt struct {
 	RequestID   string
 	SourceID    string
 	AccountKey  string
+	ClientIP    netip.Addr `json:"client_ip,omitempty"`
 	Outcome     AuthOutcome
 }
 
