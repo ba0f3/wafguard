@@ -30,7 +30,7 @@ func TestHandleSPOELogsRequest(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(prev) })
 	h.HandleSPOE(context.Background(), &encoding.ActionWriter{}, m)
 	out := buf.String()
-	for _, want := range []string{"spoe", "check-ban", "result=ok"} {
+	for _, want := range []string{"spoe", "check-ban", "result=ok", "request_id=550e8400-e29b-41d4-a716-446655440000", "client_ip=192.0.2.8", "app=sample_app", "action=allow"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("request log missing %q; got %q", want, out)
 		}

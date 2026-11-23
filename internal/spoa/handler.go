@@ -78,11 +78,19 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 	if _, known := event.PhaseForKind(event.Kind(name)); known {
 		operation = name
 	}
+	var ev event.Event
+	var decision event.Decision
+	why := "-"
 	result := "ok"
 	defer func() {
 		d := time.Since(start)
 		h.Telemetry.RecordOperation(operation, result, d)
-		log.Printf("spoe kind=%s operation=%s result=%s duration_ms=%d", name, operation, result, d.Milliseconds())
+		action := string(decision.Action)
+		if action == "" {
+			action = "-"
+		}
+		log.Printf("spoe kind=%s app=%s request_id=%s client_ip=%s action=%s reason=%s result=%s duration_ms=%d",
+			name, ev.Request.Application, ev.Request.RequestID, ev.Request.ClientIP, action, why, result, d.Milliseconds())
 	}()
 
 	select {
@@ -101,9 +109,11 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 	h.Telemetry.IncInflight()
 	defer h.Telemetry.DecInflight()
 
+	var reason event.InvalidReason
 	ev, reason, err := decodeMessage(name, m, h.Limits)
 	if err != nil {
 		result = "invalid"
+		why = "invalid:" + string(reason)
 		h.Telemetry.RecordDrop(string(reason))
 		return
 	}
@@ -120,7 +130,12 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		d, err := h.Backend.Check(opCtx, ev.Request)
 		if err != nil {
 			result = "degraded"
+			why = "redis_error"
 			d = event.UnknownDecision(true)
+		}
+		decision = d
+		if d.Explanation != "" {
+			why = d.Explanation
 		}
 		if err := writeAdmissionACK(w, d); err != nil {
 			result = "write_error"

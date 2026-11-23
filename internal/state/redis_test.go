@@ -1,9 +1,12 @@
 package state_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -57,6 +60,47 @@ func TestLostCommitObserveFenced(t *testing.T) {
 	d3, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
 	if d3.Action == event.ActionBan {
 		t.Fatal("fenced stale admission must not commit ban")
+	}
+}
+
+func TestObserveLogsBanReason(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "banlog",
+		DefaultMode: event.ModeEnforce,
+		Apps:        map[string]policy.Config{"sample_app": {WAFDenyWindowSec: 30, WAFDenyThreshold: 1, WAFDenyBanSec: 900}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	rid := "550e8400-e29b-41d4-a716-446655440099"
+	req := event.Request{Application: "sample_app", ClientIP: netip.MustParseAddr("192.0.2.9"), RequestID: rid}
+	admission, err := store.Check(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := event.Event{
+		Request:    req,
+		ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
+		Kind:       event.KindWafVerdict,
+		Phase:      event.PhaseRequest,
+		Admission:  admission.Admission,
+		RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	if err := store.Observe(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"ban issued", "request_id=" + rid, "client_ip=192.0.2.9", "reason=banned"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ban log missing %q; got %q", want, out)
+		}
 	}
 }
 

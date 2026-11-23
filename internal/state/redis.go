@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -317,7 +318,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 	if ev.FinalClientStatus != nil {
 		finalStatus = strconv.Itoa(*ev.FinalClientStatus)
 	}
-	_, err = s.observeScript.Run(ctx, s.client, keys,
+	res, err := s.observeScript.Run(ctx, s.client, keys,
 		ev.ID, time.Now().UnixMilli(), deny,
 		cfg.WAFDenyWindowSec, cfg.WAFDenyThreshold, cfg.WAFDenyBanSec,
 		string(s.cfg.DefaultMode), admissionGen, cfg.MaxEventAgeSec*1000,
@@ -325,7 +326,16 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		ev.Request.RequestID, app, ev.Request.ClientIP.String(),
 		originStatus, finalStatus, strconv.FormatUint(rev, 10),
 	).Result()
-	return err
+	if err != nil {
+		return err
+	}
+	if row, ok := res.([]interface{}); ok && len(row) > 0 {
+		reason := fmt.Sprint(row[0])
+		if reason == "banned" || reason == "brute_banned" {
+			log.Printf("ban issued app=%s request_id=%s client_ip=%s reason=%s", app, ev.Request.RequestID, ev.Request.ClientIP, reason)
+		}
+	}
+	return nil
 }
 
 func (s *Store) RecordAuth(ctx context.Context, receipt policy.AuthReceipt) error {
