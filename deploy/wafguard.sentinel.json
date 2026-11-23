@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "spop_listen": "0.0.0.0:12345",
+  "metrics_listen": "0.0.0.0:9090",
+  "default_mode": "enforce",
+  "admission_ttl_seconds": 120,
+  "redis": {
+    "sentinel": {
+      "master_name": "mymaster",
+      "addrs": ["redis-sentinel:26379"]
+    }
+  },
+  "limits": {
+    "max_inflight": 256,
+    "allowed_apps": ["sample_app"]
+  },
+  "apps": {
+    "sample_app": {
+      "waf_deny_window_sec": 30,
+      "waf_deny_threshold": 3,
+      "waf_deny_ban_sec": 900,
+      "max_event_age_sec": 120,
+      "admission_ttl": 120
+    }
+  }
+}

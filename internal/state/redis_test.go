@@ -28,6 +28,37 @@ func testStore(t *testing.T) (*state.Store, *miniredis.Miniredis) {
 	return store, mr
 }
 
+func TestLostCommitObserveFenced(t *testing.T) {
+	store, _ := testStore(t)
+	ctx := context.Background()
+	ip := netip.MustParseAddr("192.0.2.66")
+	d1, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip, OperationID: "op-lost"}); err != nil {
+		t.Fatal(err)
+	}
+	d2, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	ev := event.Event{
+		Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: "550e8400-e29b-41d4-a716-446655440088"},
+		ID:         event.EventID("sample_app", "550e8400-e29b-41d4-a716-446655440088", event.KindWafVerdict),
+		Kind:       event.KindWafVerdict,
+		Admission:  d1.Admission,
+		RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
+	}
+	if err := store.Observe(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		ev.ID = event.EventID("sample_app", fmt.Sprintf("550e8400-e29b-41d4-a716-44665544009%d", i), event.KindWafVerdict)
+		ev.Request.RequestID = fmt.Sprintf("550e8400-e29b-41d4-a716-44665544009%d", i)
+		ev.Admission = d2.Admission
+		_ = store.Observe(ctx, ev)
+	}
+	d3, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	if d3.Action == event.ActionBan {
+		t.Fatal("fenced stale admission must not commit ban")
+	}
+}
+
 func TestSharedBan(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()

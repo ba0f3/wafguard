@@ -3,12 +3,17 @@
 package integration
 
 import (
+	"context"
+	"crypto/tls"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"testing"
 	"time"
+
+	"golang.org/x/net/http2"
 )
 
 func haproxyURL() string {
@@ -33,6 +38,7 @@ func requireCompose(t *testing.T) {
 	if os.Getenv("WAF_INTEGRATION") == "" {
 		t.Skip("set WAF_INTEGRATION=1 with compose up")
 	}
+	clearLabBan(t)
 	client := &http.Client{Timeout: 2 * time.Second}
 	if _, err := client.Get(haproxyURL() + "/ok"); err != nil {
 		t.Skip("haproxy not reachable:", err)
@@ -106,16 +112,40 @@ func TestStockLifecycle(t *testing.T) {
 	}
 }
 
-func TestStockStreamIsolation(t *testing.T) {
-	requireCompose(t)
-	// HTTP/2 via TLS listener when HAPROXY_H2_URL is set.
-	if os.Getenv("HAPROXY_H2_URL") == "" {
-		t.Skip("set HAPROXY_H2_URL for HTTP/2 gate")
+func haproxyH2URL() string {
+	if u := os.Getenv("HAPROXY_H2_URL"); u != "" {
+		return u
 	}
-	t.Skip("h2 client harness pending")
+	return "http://127.0.0.1:18443"
 }
 
-func TestStockBodyAndAffinity(t *testing.T) {
+func TestStockStreamIsolation(t *testing.T) {
 	requireCompose(t)
-	t.Skip("body/affinity cases require recorder SPOA swap in compose overlay")
+	tr := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+	resp, err := client.Get(haproxyH2URL() + "/ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("h2 allow %d", resp.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodGet, haproxyH2URL()+"/ok", nil)
+	req.Header.Set("User-Agent", "fixture-deny-request")
+	resp2, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != 403 {
+		t.Fatalf("h2 deny %d", resp2.StatusCode)
+	}
 }
+

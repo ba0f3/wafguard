@@ -54,9 +54,9 @@ type Health struct {
 
 func (h *Health) SetStoreCheck(fn func() error) { h.store = fn }
 
-func (h *Health) Handler(m *Metrics) http.Handler {
+func (h *Health) Handler(reg *prometheus.Registry) http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if h.store != nil {
 			if err := h.store(); err != nil {

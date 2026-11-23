@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
@@ -25,7 +26,7 @@ func TestSharedBanRedis(t *testing.T) {
 		t.Skip("redis not available:", err)
 	}
 	store, err := state.New(client, state.Config{
-		Namespace:   fmt.Sprintf("it%x", t.Name()),
+		Namespace:   fmt.Sprintf("it%d", time.Now().UnixNano()),
 		DefaultMode: event.ModeEnforce,
 		Apps:        map[string]policy.Config{"sample_app": policy.DefaultConfig()},
 	})
@@ -34,14 +35,21 @@ func TestSharedBanRedis(t *testing.T) {
 	}
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.44")
-	d1, err := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	req := event.Request{Application: "sample_app", ClientIP: ip}
+	d1, err := store.Check(ctx, req)
 	if err != nil || d1.Action != event.ActionAllow {
-		t.Fatalf("check: %v %v", d1, err)
+		t.Fatalf("first check: %v %v", d1, err)
 	}
-	for i := 0; i < 3; i++ {
-		rid := fmt.Sprintf("750e8400-e29b-41d4-a716-44665544000%d", i)
+	ids := []string{
+		"550e8400-e29b-41d4-a716-446655440001",
+		"550e8400-e29b-41d4-a716-446655440002",
+		"550e8400-e29b-41d4-a716-446655440003",
+	}
+	for _, rid := range ids {
+		r := req
+		r.RequestID = rid
 		ev := event.Event{
-			Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid},
+			Request:    r,
 			ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
 			Kind:       event.KindWafVerdict,
 			Admission:  d1.Admission,
@@ -51,7 +59,10 @@ func TestSharedBanRedis(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d2, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	d2, err := store.Check(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if d2.Action != event.ActionBan {
 		t.Fatalf("want ban got %s", d2.Action)
 	}

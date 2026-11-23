@@ -1,0 +1,22 @@
+services:
+  wafguard:
+    profiles: ["disabled"]
+  recorder:
+    build:
+      context: ..
+      dockerfile: integration/images/recorder.Dockerfile
+    ports:
+      - "12346:12346"
+      - "18090:18090"
+  haproxy:
+    depends_on: !reset
+      recorder:
+        condition: service_started
+      coraza-spoa:
+        condition: service_started
+      testorigin:
+        condition: service_started
+    volumes:
+      - ../deploy/haproxy/haproxy-recorder.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ../deploy/haproxy/coraza.cfg:/usr/local/etc/haproxy/coraza.cfg:ro
+      - ../deploy/haproxy/wafguard-recorder.cfg:/usr/local/etc/haproxy/wafguard.cfg:ro

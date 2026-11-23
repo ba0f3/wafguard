@@ -1,0 +1,14 @@
+services:
+  redis-sentinel:
+    image: redis:7-alpine
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "26379:26379"
+    command:
+      - sh
+      - -c
+      - |
+        printf 'port 26379\nsentinel monitor mymaster redis 6379 1\nsentinel resolve-hostnames yes\nsentinel down-after-milliseconds mymaster 3000\n' > /tmp/sentinel.conf
+        exec redis-sentinel /tmp/sentinel.conf

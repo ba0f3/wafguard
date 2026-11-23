@@ -40,6 +40,43 @@ func New(store *state.Store, access Access) http.Handler {
 			return
 		}
 		switch {
+		case len(parts) == 2 && parts[1] == "policy" && r.Method == http.MethodPut:
+			if access.Role != Write {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			var body struct {
+				ExpectedRevision uint64        `json:"expected_revision"`
+				Mode             event.Mode    `json:"mode"`
+				Config           policy.Config `json:"config"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if r.URL.Query().Get("dry_run") == "1" {
+				next, err := store.ValidatePolicyUpdate(r.Context(), app, body.ExpectedRevision, body.Config)
+				if err != nil {
+					if strings.Contains(err.Error(), "stale revision") {
+						http.Error(w, err.Error(), http.StatusConflict)
+						return
+					}
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]uint64{"next_revision": next})
+				return
+			}
+			newRev, err := store.SetPolicy(r.Context(), app, body.ExpectedRevision, body.Config, body.Mode)
+			if err != nil {
+				if strings.Contains(err.Error(), "stale revision") {
+					http.Error(w, err.Error(), http.StatusConflict)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]uint64{"revision": newRev})
 		case len(parts) == 2 && parts[1] == "unban" && r.Method == http.MethodPost:
 			if access.Role != Write {
 				http.Error(w, "forbidden", http.StatusForbidden)

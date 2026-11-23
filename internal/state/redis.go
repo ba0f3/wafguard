@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/enrich"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
 	"github.com/redis/go-redis/v9"
@@ -24,35 +26,36 @@ type Config struct {
 }
 
 type Store struct {
-	client      redis.UniversalClient
-	cfg         Config
-	checkSHA    string
-	observeSHA  string
-	mu          sync.RWMutex
-	fenceGen    map[string]string // app -> generation
+	client     redis.UniversalClient
+	cfg        Config
+	checkSHA   string
+	observeSHA string
+	enrichSHA  string
+	mu         sync.RWMutex
+	fenceGen   map[string]string // app -> generation
 }
 
 type Inspection struct {
-	Action     event.Action
-	ExpiresAt  time.Time
-	Revision   uint64
-	Mode       event.Mode
-	Generation string
+	Action      event.Action
+	ExpiresAt   time.Time
+	Revision    uint64
+	Mode        event.Mode
+	Generation  string
 	Explanation string
 }
 
 type UnbanRequest struct {
-	Application     string
-	ClientIP        netip.Addr
-	Mode            event.Mode
-	OperationID     string
-	Reason          string
-	Suppression     time.Duration
+	Application string
+	ClientIP    netip.Addr
+	Mode        event.Mode
+	OperationID string
+	Reason      string
+	Suppression time.Duration
 }
 
 type UnbanResult struct {
-	Generation       string
-	SuppressedUntil  time.Time
+	Generation      string
+	SuppressedUntil time.Time
 }
 
 type Page struct {
@@ -86,11 +89,20 @@ func New(client redis.UniversalClient, cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	enrichSrc, err := scriptsFS.ReadFile("scripts/enrich.lua")
+	if err != nil {
+		return nil, err
+	}
+	enrichSHA, err := client.ScriptLoad(context.Background(), string(enrichSrc)).Result()
+	if err != nil {
+		return nil, err
+	}
 	s := &Store{
 		client:     client,
 		cfg:        cfg,
 		checkSHA:   checkSHA,
 		observeSHA: observeSHA,
+		enrichSHA:  enrichSHA,
 		fenceGen:   map[string]string{},
 	}
 	for app := range cfg.Apps {
@@ -256,6 +268,29 @@ func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error
 	return UnbanResult{Generation: gen, SuppressedUntil: time.Now().Add(req.Suppression)}, nil
 }
 
+func (s *Store) PolicyRevision(ctx context.Context, app string) (uint64, error) {
+	revKey := s.prefix("policy", app) + ":revision"
+	rev, err := s.client.Get(ctx, revKey).Uint64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return rev, err
+}
+
+func (s *Store) ValidatePolicyUpdate(ctx context.Context, app string, expectedRevision uint64, cfg policy.Config) (uint64, error) {
+	if err := policy.Validate(cfg); err != nil {
+		return 0, err
+	}
+	rev, err := s.PolicyRevision(ctx, app)
+	if err != nil {
+		return 0, err
+	}
+	if expectedRevision != rev {
+		return rev, fmt.Errorf("stale revision: have %d want %d", rev, expectedRevision)
+	}
+	return rev + 1, nil
+}
+
 func (s *Store) SetPolicy(ctx context.Context, app string, expectedRevision uint64, cfg policy.Config, mode event.Mode) (uint64, error) {
 	meta := s.prefix("policy", app)
 	revKey := meta + ":revision"
@@ -272,8 +307,30 @@ func (s *Store) SetPolicy(ctx context.Context, app string, expectedRevision uint
 	pipe := s.client.Pipeline()
 	pipe.Set(ctx, s.modeKey(app), string(mode), 0)
 	pipe.Set(ctx, revKey, newRev, 0)
+	pipe.Set(ctx, s.fenceKey(app), fmt.Sprintf("rev-%d", newRev), 24*time.Hour)
 	_, err = pipe.Exec(ctx)
 	return newRev, err
+}
+
+func (s *Store) enrichKey(app, requestID string) string {
+	return s.prefix("enrich", app, requestID)
+}
+
+func (s *Store) Enrich(ctx context.Context, m enrich.Match) error {
+	tags, _ := json.Marshal(m.Tags)
+	_, err := s.client.EvalSha(ctx, s.enrichSHA, []string{s.enrichKey(m.Application, m.RequestID)},
+		strconv.FormatUint(uint64(m.RuleID), 10),
+		string(tags),
+		strconv.Itoa(m.Severity),
+		strconv.Itoa(m.PhaseID),
+		"3600",
+	).Result()
+	return err
+}
+
+func (s *Store) HasEnrichment(ctx context.Context, app, requestID string) (bool, error) {
+	n, err := s.client.Exists(ctx, s.enrichKey(app, requestID)).Result()
+	return n > 0, err
 }
 
 func (s *Store) Inspect(ctx context.Context, app string, mode event.Mode, ip netip.Addr) (Inspection, error) {
@@ -296,4 +353,3 @@ func (s *Store) List(ctx context.Context, app string, mode event.Mode, cursor st
 	}
 	return Page{Items: nil, NextCursor: ""}, nil
 }
-

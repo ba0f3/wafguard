@@ -91,6 +91,23 @@ func TestOverload(t *testing.T) {
 	h.HandleSPOE(context.Background(), w, m)
 }
 
+func TestSlowResponseAdmission(t *testing.T) {
+	backend := &fakeBackend{checkSlow: 200 * time.Millisecond}
+	limits := event.Limits{AllowedApps: map[string]struct{}{"sample_app": {}}}
+	h := NewHandler(backend, limits)
+	h.Timeout = 50 * time.Millisecond
+	w := &encoding.ActionWriter{}
+	m := mustMessage(t, "check-ban", map[string]string{
+		"schema_version": "1",
+		"request_id":     "550e8400-e29b-41d4-a716-446655440002",
+		"app":            "sample_app",
+		"client_ip":      "192.0.2.8",
+		"peer_ip":        "192.0.2.1",
+		"path":           "/ok",
+	})
+	h.HandleSPOE(context.Background(), w, m)
+}
+
 func TestWireV1Decode(t *testing.T) {
 	limits := event.Limits{
 		AllowedApps: map[string]struct{}{"sample_app": {}},

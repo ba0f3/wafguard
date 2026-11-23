@@ -40,7 +40,13 @@ type fileConfig struct {
 }
 
 type redisOptions struct {
-	Addr string `json:"addr"`
+	Addr     string          `json:"addr"`
+	Sentinel *sentinelOptions `json:"sentinel,omitempty"`
+}
+
+type sentinelOptions struct {
+	MasterName string   `json:"master_name"`
+	Addrs      []string `json:"addrs"`
 }
 
 type limitsConfig struct {
@@ -63,7 +69,11 @@ func loadConfig(r io.Reader) (runtimeConfig, error) {
 	if fc.SPOPListen == "" {
 		return runtimeConfig{}, errors.New("spop_listen required")
 	}
-	if fc.Redis.Addr == "" {
+	if fc.Redis.Sentinel != nil && len(fc.Redis.Sentinel.Addrs) > 0 {
+		if fc.Redis.Sentinel.MasterName == "" {
+			return runtimeConfig{}, errors.New("redis.sentinel.master_name required")
+		}
+	} else if fc.Redis.Addr == "" {
 		return runtimeConfig{}, errors.New("redis.addr required")
 	}
 	if fc.AdmissionTTLSeconds > 0 && fc.AdmissionTTLSeconds < 30 {
@@ -75,9 +85,19 @@ func loadConfig(r io.Reader) (runtimeConfig, error) {
 	return runtimeConfig{file: fc}, nil
 }
 
+func newRedisClient(ro redisOptions) redis.UniversalClient {
+	if ro.Sentinel != nil && ro.Sentinel.MasterName != "" && len(ro.Sentinel.Addrs) > 0 {
+		return redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:    ro.Sentinel.MasterName,
+			SentinelAddrs: ro.Sentinel.Addrs,
+		})
+	}
+	return redis.NewClient(&redis.Options{Addr: ro.Addr})
+}
+
 func run(ctx context.Context, cfg runtimeConfig) error {
 	fc := cfg.file
-	client := redis.NewClient(&redis.Options{Addr: fc.Redis.Addr})
+	client := newRedisClient(fc.Redis)
 	mode := event.ModeObserve
 	if fc.DefaultMode == "enforce" {
 		mode = event.ModeEnforce
@@ -117,7 +137,7 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 
 	if fc.Metrics != "" {
 		go func() {
-			_ = http.ListenAndServe(fc.Metrics, health.Handler(metrics))
+			_ = http.ListenAndServe(fc.Metrics, health.Handler(reg))
 		}()
 	}
 	if fc.AdminWrite != "" {

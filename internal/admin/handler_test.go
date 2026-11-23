@@ -29,6 +29,25 @@ func testStore(t *testing.T) *state.Store {
 	return store
 }
 
+func TestAdminPolicyDryRun409(t *testing.T) {
+	store := testStore(t)
+	h := admin.New(store, admin.Access{Role: admin.Write, Application: "sample_app"})
+	cfg := `{"waf_deny_threshold":3,"max_event_age_sec":120,"admission_ttl":120}`
+	body := `{"expected_revision":0,"mode":"observe","config":` + cfg + `}`
+	req := httptest.NewRequest(http.MethodPut, "/v1/apps/sample_app/policy?dry_run=1", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("dry-run %d %s", w.Code, w.Body.String())
+	}
+	stale := httptest.NewRequest(http.MethodPut, "/v1/apps/sample_app/policy?dry_run=1", strings.NewReader(`{"expected_revision":99,"mode":"observe","config":`+cfg+`}`))
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, stale)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("stale dry-run %d", w2.Code)
+	}
+}
+
 func TestAdminRoles(t *testing.T) {
 	store := testStore(t)
 	readH := admin.New(store, admin.Access{Role: admin.Read, Application: "sample_app"})

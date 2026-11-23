@@ -23,21 +23,21 @@ type AuthReceipt struct {
 }
 
 type Config struct {
-	WAFDenyWindowSec   int
-	WAFDenyThreshold   int
-	WAFDenyBanSec      int
-	ScannerWindowSec   int
-	ScannerResponses   int
-	ScannerPaths       int
-	BruteWindowSec     int
-	BruteFailures      int
-	ThrottleSec        int
-	OutageWindowSec    int
-	OutageUniqueIPs    int
-	MaxEventAgeSec     int
-	AdmissionTTL       int
-	ProbePaths         []string
-	SlowScannerEnabled bool
+	WAFDenyWindowSec   int      `json:"waf_deny_window_sec"`
+	WAFDenyThreshold   int      `json:"waf_deny_threshold"`
+	WAFDenyBanSec      int      `json:"waf_deny_ban_sec"`
+	ScannerWindowSec   int      `json:"scanner_window_sec"`
+	ScannerResponses   int      `json:"scanner_responses"`
+	ScannerPaths       int      `json:"scanner_paths"`
+	BruteWindowSec     int      `json:"brute_window_sec"`
+	BruteFailures      int      `json:"brute_failures"`
+	ThrottleSec        int      `json:"throttle_sec"`
+	OutageWindowSec    int      `json:"outage_window_sec"`
+	OutageUniqueIPs    int      `json:"outage_unique_ips"`
+	MaxEventAgeSec     int      `json:"max_event_age_sec"`
+	AdmissionTTL       int      `json:"admission_ttl"`
+	ProbePaths         []string `json:"probe_paths"`
+	SlowScannerEnabled bool     `json:"slow_scanner_enabled"`
 }
 
 type Evidence struct {

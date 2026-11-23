@@ -11,6 +11,19 @@ import (
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 )
 
+func parseAddrValue(val string) (netip.Addr, error) {
+	val = strings.TrimSpace(val)
+	if len(val) == 4 {
+		return netip.AddrFrom4([4]byte{val[0], val[1], val[2], val[3]}), nil
+	}
+	if len(val) == 16 {
+		var b [16]byte
+		copy(b[:], val)
+		return netip.AddrFrom16(b), nil
+	}
+	return netip.ParseAddr(val)
+}
+
 func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event.Event, event.InvalidReason, error) {
 	kind := event.Kind(name)
 	phase, ok := event.PhaseForKind(kind)
@@ -52,13 +65,13 @@ func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event
 		case "route_group":
 			ev.Request.RouteGroup = val
 		case "client_ip":
-			addr, err := netip.ParseAddr(val)
+			addr, err := parseAddrValue(val)
 			if err != nil {
 				return ev, event.InvalidForwardingIP, err
 			}
 			ev.Request.ClientIP = addr.Unmap()
 		case "peer_ip":
-			addr, err := netip.ParseAddr(val)
+			addr, err := parseAddrValue(val)
 			if err != nil {
 				return ev, event.InvalidForwardingIP, err
 			}
@@ -66,17 +79,21 @@ func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event
 		case "admission_generation":
 			admissionGen = val
 		case "admission_at_ms":
-			v, err := strconv.ParseInt(val, 10, 64)
-			if err != nil {
-				return ev, event.InvalidControlChar, err
+			if val != "" {
+				v, err := strconv.ParseInt(val, 10, 64)
+				if err != nil {
+					return ev, event.InvalidControlChar, err
+				}
+				admissionAtMS = v
 			}
-			admissionAtMS = v
 		case "policy_revision":
-			v, err := strconv.ParseUint(val, 10, 64)
-			if err != nil {
-				return ev, event.InvalidControlChar, err
+			if val != "" {
+				v, err := strconv.ParseUint(val, 10, 64)
+				if err != nil {
+					return ev, event.InvalidControlChar, err
+				}
+				policyRev = v
 			}
-			policyRev = v
 		case "behavior_mode":
 			behaviorMode = val
 		case "own_rejection":
@@ -211,25 +228,25 @@ func writeAdmissionACK(w *encoding.ActionWriter, d event.Decision) error {
 	if action == "" {
 		action = string(event.ActionUnknown)
 	}
-	if err := w.SetString(encoding.VarScopeTransaction, event.VarPrefix+".action", action); err != nil {
+	if err := w.SetString(encoding.VarScopeTransaction, "action", action); err != nil {
 		return err
 	}
 	if d.Admission != nil {
-		if err := w.SetString(encoding.VarScopeTransaction, event.VarPrefix+".admission_generation", d.Admission.Generation); err != nil {
+		if err := w.SetString(encoding.VarScopeTransaction, "admission_generation", d.Admission.Generation); err != nil {
 			return err
 		}
-		if err := w.SetInt64(encoding.VarScopeTransaction, event.VarPrefix+".admission_at_ms", d.Admission.At.UnixMilli()); err != nil {
+		if err := w.SetInt64(encoding.VarScopeTransaction, "admission_at_ms", d.Admission.At.UnixMilli()); err != nil {
 			return err
 		}
-		if err := w.SetInt64(encoding.VarScopeTransaction, event.VarPrefix+".policy_revision", int64(d.Admission.Revision)); err != nil {
+		if err := w.SetInt64(encoding.VarScopeTransaction, "policy_revision", int64(d.Admission.Revision)); err != nil {
 			return err
 		}
-		if err := w.SetString(encoding.VarScopeTransaction, event.VarPrefix+".behavior_mode", string(d.Admission.Mode)); err != nil {
+		if err := w.SetString(encoding.VarScopeTransaction, "behavior_mode", string(d.Admission.Mode)); err != nil {
 			return err
 		}
 	}
 	if d.Degraded {
-		if err := w.SetString(encoding.VarScopeTransaction, event.VarPrefix+".degraded", "true"); err != nil {
+		if err := w.SetString(encoding.VarScopeTransaction, "degraded", "true"); err != nil {
 			return err
 		}
 	}
@@ -238,7 +255,7 @@ func writeAdmissionACK(w *encoding.ActionWriter, d event.Decision) error {
 
 func writeObserveACK(w *encoding.ActionWriter, degraded bool) error {
 	if degraded {
-		return w.SetString(encoding.VarScopeTransaction, event.VarPrefix+".degraded", "true")
+		return w.SetString(encoding.VarScopeTransaction, "degraded", "true")
 	}
 	return nil
 }

@@ -122,12 +122,19 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		h.Telemetry.RecordEvent(string(ev.Kind), string(d.Action))
 	case event.KindWafVerdict, event.KindObserveResponse:
 		if ev.Admission == nil {
-			result = "missing_admission"
-			h.Telemetry.RecordDrop("missing_admission")
-			if ev.Kind == event.KindWafVerdict {
+			if ev.RequestWAF.Action == "" {
+				result = "missing_admission"
+				h.Telemetry.RecordDrop("missing_admission")
 				return
 			}
-			return
+			// shortcut: HAProxy does not pass admission txn vars into later SPOE message args in this lab
+			d, err := h.Backend.Check(opCtx, ev.Request)
+			if err != nil || d.Admission == nil {
+				result = "missing_admission"
+				h.Telemetry.RecordDrop("missing_admission")
+				return
+			}
+			ev.Admission = d.Admission
 		}
 		if err := h.Backend.Observe(opCtx, ev); err != nil {
 			result = "observe_error"

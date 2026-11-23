@@ -2,49 +2,129 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 	"github.com/dropmorepackets/haproxy-go/spop"
 )
 
+type snap struct {
+	Message string `json:"message"`
+	Action  string `json:"action,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
+type entry struct {
+	Calls     []string `json:"calls"`
+	Snapshots []snap   `json:"snapshots"`
+}
+
 var (
-	mu   sync.RWMutex
-	byID = map[string][]string{}
+	mu     sync.RWMutex
+	byID   = map[string]*entry{}
+	lastID string
 )
 
 type rec struct{}
 
-func (rec) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *encoding.Message) {
-	name := string(m.NameBytes())
-	var rid string
+func getOrCreate(id string) *entry {
+	e, ok := byID[id]
+	if !ok {
+		e = &entry{}
+		byID[id] = e
+	}
+	return e
+}
+
+func kvString(m *encoding.Message, name string) string {
 	k := encoding.AcquireKVEntry()
 	defer encoding.ReleaseKVEntry(k)
 	for m.KV.Next(k) {
-		if k.NameEquals("request_id") {
-			rid = string(k.ValueBytes())
-			break
+		if k.NameEquals(name) {
+			return string(k.ValueBytes())
 		}
 	}
+	return ""
+}
+
+func (rec) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *encoding.Message) {
+	name := string(m.NameBytes())
+	rid := kvString(m, "request_id")
 	if rid == "" {
 		return
 	}
 	mu.Lock()
-	byID[rid] = append(byID[rid], name)
+	lastID = rid
+	e := getOrCreate(rid)
+	e.Calls = append(e.Calls, name)
+	if name == "waf-verdict" {
+		e.Snapshots = append(e.Snapshots, snap{
+			Message: name,
+			Action:  kvString(m, "request_waf_action"),
+			Source:  kvString(m, "request_waf_source"),
+		})
+	}
 	mu.Unlock()
-	if name == "check-ban" {
+
+	switch name {
+	case "check-ban":
 		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.action", "allow")
+		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.admission_generation", "rec-gen")
+		_ = w.SetInt64(encoding.VarScopeTransaction, "wafguard.admission_at_ms", 1)
+		_ = w.SetInt64(encoding.VarScopeTransaction, "wafguard.policy_revision", 1)
+		_ = w.SetString(encoding.VarScopeTransaction, "wafguard.behavior_mode", "enforce")
+	}
+}
+
+func httpHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Path[len("/v1/requests/"):]
+	if id == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		mu.RLock()
+		e := byID[id]
+		mu.RUnlock()
+		if e == nil {
+			e = &entry{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(e)
+	case http.MethodDelete:
+		mu.Lock()
+		delete(byID, id)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method", http.StatusMethodNotAllowed)
 	}
 }
 
 func main() {
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/requests/", httpHandler)
+		mux.HandleFunc("/v1/last", func(w http.ResponseWriter, r *http.Request) {
+			mu.RLock()
+			id := lastID
+			mu.RUnlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"request_id": id})
+		})
+		log.Println("recorder http on :18090")
+		log.Fatal(http.ListenAndServe(":18090", mux))
+	}()
+
 	l, err := net.Listen("tcp", ":12346")
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("recorder on", l.Addr())
+	log.Println("recorder spop on", l.Addr())
 	_ = spop.ListenAndServe(l.Addr().String(), rec{})
 }
-
