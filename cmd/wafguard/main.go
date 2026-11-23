@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,26 +29,28 @@ import (
 )
 
 type fileConfig struct {
-	Version    int `json:"version"`
-	SPOPListen string `json:"spop_listen"`
-	AdminRead  string `json:"admin_read_socket"`
-	AdminWrite string `json:"admin_write_socket"`
-	Metrics    string `json:"metrics_listen"`
-	Redis      redisOptions `json:"redis"`
-	Limits     limitsConfig `json:"limits"`
-	Apps       map[string]policy.Config `json:"apps"`
-	DefaultMode string `json:"default_mode"`
-	AdmissionTTLSeconds int    `json:"admission_ttl_seconds"`
-	AdminHTTPWrite      string   `json:"admin_http_write"`
-	AdminHTTPAuth       string   `json:"admin_http_auth"`
-	AdminHTTPAuthSource string   `json:"admin_http_auth_source"`
-	AdminHTTPAuthToken  string   `json:"admin_http_auth_token"`
-	EnrichLogFile       string   `json:"enrich_log_file"`
-	EnrichApplication   string   `json:"enrich_application"`
+	Version                  int                      `json:"version"`
+	SPOPListen               string                   `json:"spop_listen"`
+	AdminRead                string                   `json:"admin_read_socket"`
+	AdminWrite               string                   `json:"admin_write_socket"`
+	Metrics                  string                   `json:"metrics_listen"`
+	Redis                    redisOptions             `json:"redis"`
+	Limits                   limitsConfig             `json:"limits"`
+	Apps                     map[string]policy.Config `json:"apps"`
+	DefaultMode              string                   `json:"default_mode"`
+	AdmissionTTLSeconds      int                      `json:"admission_ttl_seconds"`
+	AdminHTTPWrite           string                   `json:"admin_http_write"`
+	AdminHTTPWriteToken      string                   `json:"admin_http_write_token"`
+	AdminHTTPAuth            string                   `json:"admin_http_auth"`
+	AdminHTTPAuthSource      string                   `json:"admin_http_auth_source"`
+	AdminHTTPAuthApplication string                   `json:"admin_http_auth_application"`
+	AdminHTTPAuthToken       string                   `json:"admin_http_auth_token"`
+	EnrichLogFile            string                   `json:"enrich_log_file"`
+	EnrichApplication        string                   `json:"enrich_application"`
 }
 
 type redisOptions struct {
-	Addr     string          `json:"addr"`
+	Addr     string           `json:"addr"`
 	Sentinel *sentinelOptions `json:"sentinel,omitempty"`
 }
 
@@ -89,30 +92,64 @@ func loadConfig(r io.Reader) (runtimeConfig, error) {
 	if fc.AdminRead != "" && fc.AdminRead == fc.AdminWrite {
 		return runtimeConfig{}, errors.New("admin read/write socket collision")
 	}
+	// HTTP write/admin listeners are unauthenticated by default in Redis and
+	// Coraza; require an explicit token so a bind address cannot expose writes.
+	if fc.AdminHTTPWrite != "" && fc.AdminHTTPWriteToken == "" {
+		return runtimeConfig{}, errors.New("admin_http_write_token required with admin_http_write")
+	}
+	if fc.AdminHTTPAuth != "" && fc.AdminHTTPAuthToken == "" {
+		return runtimeConfig{}, errors.New("admin_http_auth_token required with admin_http_auth")
+	}
 	return runtimeConfig{file: fc}, nil
 }
+
+// Redis I/O is bounded well inside the SPOE handler budget (450 ms) so a
+// stalled socket cannot pin a request past HAProxy's processing timeout.
+const (
+	redisDialTimeout     = 150 * time.Millisecond
+	redisIOTimeout       = 250 * time.Millisecond
+	redisPoolTimeout     = 250 * time.Millisecond
+	redisMaxRetries      = 2
+	redisRetryMinBackoff = 5 * time.Millisecond
+	redisRetryMaxBackoff = 40 * time.Millisecond
+)
 
 func newRedisClient(ro redisOptions) redis.UniversalClient {
 	if ro.Sentinel != nil && ro.Sentinel.MasterName != "" && len(ro.Sentinel.Addrs) > 0 {
 		return redis.NewFailoverClient(&redis.FailoverOptions{
-			MasterName:    ro.Sentinel.MasterName,
-			SentinelAddrs: ro.Sentinel.Addrs,
+			MasterName: ro.Sentinel.MasterName, SentinelAddrs: ro.Sentinel.Addrs,
+			DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
+			WriteTimeout: redisIOTimeout, PoolTimeout: redisPoolTimeout,
+			MaxRetries: redisMaxRetries, MinRetryBackoff: redisRetryMinBackoff,
+			MaxRetryBackoff: redisRetryMaxBackoff, ContextTimeoutEnabled: true,
 		})
 	}
-	return redis.NewClient(&redis.Options{Addr: ro.Addr})
+	return redis.NewClient(&redis.Options{
+		Addr: ro.Addr, DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
+		WriteTimeout: redisIOTimeout, PoolTimeout: redisPoolTimeout,
+		MaxRetries: redisMaxRetries, MinRetryBackoff: redisRetryMinBackoff,
+		MaxRetryBackoff: redisRetryMaxBackoff, ContextTimeoutEnabled: true,
+	})
 }
 
 func run(ctx context.Context, cfg runtimeConfig) error {
 	fc := cfg.file
+	authSource := fc.AdminHTTPAuthSource
+	if authSource == "" {
+		authSource = "login-app"
+	}
 	client := newRedisClient(fc.Redis)
 	mode := event.ModeObserve
 	if fc.DefaultMode == "enforce" {
 		mode = event.ModeEnforce
 	}
 	store, err := state.New(client, state.Config{
-		Namespace:   "wg",
-		DefaultMode: mode,
-		Apps:        fc.Apps,
+		Namespace:       "wg",
+		DefaultMode:     mode,
+		Apps:            fc.Apps,
+		AuthSource:      authSource,
+		AuthApplication: fc.AdminHTTPAuthApplication,
+		AdmissionTTL:    time.Duration(fc.AdmissionTTLSeconds) * time.Second,
 	})
 	if err != nil {
 		return err
@@ -154,16 +191,15 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 		go serveUnix(fc.AdminRead, admin.New(store, admin.Access{Role: admin.Read}))
 	}
 	if fc.AdminHTTPWrite != "" {
+		writeH := admin.New(store, admin.Access{Role: admin.Write})
 		go func() {
-			_ = http.ListenAndServe(fc.AdminHTTPWrite, admin.New(store, admin.Access{Role: admin.Write}))
+			_ = http.ListenAndServe(fc.AdminHTTPWrite, withAuthToken(fc.AdminHTTPWriteToken, writeH))
 		}()
 	}
 	if fc.AdminHTTPAuth != "" {
-		src := fc.AdminHTTPAuthSource
-		if src == "" {
-			src = "http-auth"
-		}
-		authH := admin.New(store, admin.Access{Role: admin.Auth, SourceID: src})
+		authH := admin.New(store, admin.Access{
+			Role: admin.Auth, SourceID: authSource, Application: store.AuthApplication(),
+		})
 		go func() {
 			_ = http.ListenAndServe(fc.AdminHTTPAuth, withAuthToken(fc.AdminHTTPAuthToken, authH))
 		}()
@@ -188,6 +224,8 @@ func serveUnix(path string, h http.Handler) {
 		log.Printf("admin listen %s: %v", path, err)
 		return
 	}
+	// Permissioned Unix socket: owner-only, never group/world writable.
+	_ = os.Chmod(path, 0600)
 	_ = http.Serve(l, h)
 }
 
@@ -196,7 +234,8 @@ func withAuthToken(token string, h http.Handler) http.Handler {
 		return h
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Wafguard-Auth-Token") != token {
+		got := r.Header.Get("X-Wafguard-Auth-Token")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -225,4 +264,3 @@ func main() {
 		log.Fatal(err)
 	}
 }
-

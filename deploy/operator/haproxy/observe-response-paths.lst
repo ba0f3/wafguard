@@ -1,0 +1,3 @@
+# Opt-in response status observation. Empty by default: no synchronous
+# observe-response SPOE group is sent unless a status consumer is configured.
+# Add one path prefix per line to enable it for those routes only.

@@ -2,7 +2,7 @@ services:
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
-    ports: ["6379:6379"]
+    ports: ["127.0.0.1:6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -22,7 +22,7 @@ services:
       - WG_CONFIG=/etc/wafguard/config.json
 
     ports:
-      - "12345:12345"
+      - "127.0.0.1:12345:12345"
       - "127.0.0.1:9090:9090"
       - "127.0.0.1:19201:19201"
 
@@ -30,18 +30,18 @@ services:
     build:
       context: ..
       dockerfile: integration/images/testorigin.Dockerfile
-    ports: ["8081:8081"]
+    ports: ["127.0.0.1:8081:8081"]
 
   coraza-spoa:
     image: ghcr.io/corazawaf/coraza-spoa:0.9.1
     volumes:
       - ./fixtures/coraza-spoa.yaml:/config.yaml:ro
-    ports: ["9000:9000"]
+    ports: ["127.0.0.1:9000:9000"]
 
   haproxy:
     image: haproxy:3.2.0
     depends_on: [wafguard, coraza-spoa, testorigin]
     volumes:
       - ../deploy/haproxy:/usr/local/etc/haproxy:ro
-    ports: ["18080:8080", "18443:8443"]
+    ports: ["127.0.0.1:18080:8080", "127.0.0.1:18443:8443"]
 

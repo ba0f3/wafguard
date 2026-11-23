@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "spop_listen": "172.31.10.10:12345",
+  "metrics_listen": "172.31.30.10:9090",
+  "admin_http_auth": "172.31.30.10:19201",
+  "admin_http_auth_source": "operator-login",
+  "admin_http_write": "172.31.30.10:19200",
+  "default_mode": "enforce",
+  "admission_ttl_seconds": 120,
+  "redis": {
+    "addr": "172.31.20.5:6379"
+  },
+  "limits": {
+    "max_inflight": 256,
+    "allowed_apps": [
+      "sample_app"
+    ]
+  },
+  "apps": {
+    "sample_app": {
+      "waf_deny_window_sec": 30,
+      "waf_deny_threshold": 3,
+      "waf_deny_ban_sec": 900,
+      "brute_window_sec": 60,
+      "brute_failures": 10,
+      "max_event_age_sec": 120,
+      "admission_ttl": 120
+    }
+  }
+}

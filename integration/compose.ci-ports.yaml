@@ -1,0 +1,13 @@
+# Isolated verification ports: avoids colliding with other Compose projects on
+# the shared host. Use only with integration/compose.yaml.
+services:
+  redis:
+    ports: !override ["127.0.0.1:36379:6379"]
+  wafguard:
+    ports: !override ["127.0.0.1:32345:12345", "127.0.0.1:39090:9090", "127.0.0.1:39200:19200", "127.0.0.1:39201:19201"]
+  testorigin:
+    ports: !override ["127.0.0.1:38081:8081"]
+  coraza-spoa:
+    ports: !override ["127.0.0.1:39000:9000"]
+  haproxy:
+    ports: !override ["127.0.0.1:38080:8080", "127.0.0.1:38443:8443"]

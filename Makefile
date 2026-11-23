@@ -4,7 +4,7 @@ FUZZ_WORKERS ?= 2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build lint vet test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-auth-http it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-phase4-only-all it-gate-sequence validate-operator-deploy compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up compose-down
+.PHONY: build lint vet test validate-operator-compose it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-auth-http it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-phase4-only-all it-gate-sequence validate-operator-deploy compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up compose-down
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -203,6 +203,10 @@ compose-recorder-up:
 
 validate-operator-deploy:
 	OPERATOR_COMPOSE_PROJECT=wafgate-operator-val bash docs/examples/deploy-operator-validate.sh
+
+# Standalone production-shaped operator topology: no published SPOE ports.
+# The validation script supplies operator-owned fixture configs and tokens.
+validate-operator-compose: validate-operator-deploy
 
 compose-down:
 	docker compose -f $(COMPOSE_FILE) down -v

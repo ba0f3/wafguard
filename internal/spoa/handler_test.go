@@ -13,12 +13,16 @@ import (
 
 type fakeBackend struct {
 	mu           sync.Mutex
+	checkCalls   int
 	observeCalls int
 	checkAction  event.Action
 	checkSlow    time.Duration
 }
 
 func (f *fakeBackend) Check(ctx context.Context, req event.Request) (event.Decision, error) {
+	f.mu.Lock()
+	f.checkCalls++
+	f.mu.Unlock()
 	if f.checkSlow > 0 {
 		select {
 		case <-time.After(f.checkSlow):
@@ -50,9 +54,9 @@ func (f *fakeBackend) Observe(ctx context.Context, ev event.Event) error {
 func TestMissingAdmission(t *testing.T) {
 	backend := &fakeBackend{}
 	limits := event.Limits{
-		AllowedApps: map[string]struct{}{"sample_app": {}},
-		MaxPathLen:  1024,
-		MaxRuleIDs:  64,
+		AllowedApps:    map[string]struct{}{"sample_app": {}},
+		MaxPathLen:     1024,
+		MaxRuleIDs:     64,
 		MaxCategoryLen: 64,
 	}
 	h := NewHandler(backend, limits)
@@ -111,9 +115,9 @@ func TestSlowResponseAdmission(t *testing.T) {
 
 func TestWireV1Decode(t *testing.T) {
 	limits := event.Limits{
-		AllowedApps: map[string]struct{}{"sample_app": {}},
-		MaxPathLen:  1024,
-		MaxRuleIDs:  64,
+		AllowedApps:    map[string]struct{}{"sample_app": {}},
+		MaxPathLen:     1024,
+		MaxRuleIDs:     64,
 		MaxCategoryLen: 64,
 	}
 	m := mustMessage(t, "waf-verdict", map[string]string{
@@ -141,4 +145,3 @@ func TestWireV1Decode(t *testing.T) {
 		t.Fatal(ev.Request.PeerIP)
 	}
 }
-

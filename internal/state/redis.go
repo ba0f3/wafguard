@@ -3,13 +3,15 @@ package state
 import (
 	"context"
 	"embed"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 
-	"encoding/json"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/enrich"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
@@ -20,29 +22,45 @@ import (
 var scriptsFS embed.FS
 
 type Config struct {
-	Namespace   string
-	DefaultMode event.Mode
-	Apps        map[string]policy.Config
+	Namespace       string
+	DefaultMode     event.Mode
+	Apps            map[string]policy.Config
+	AuthSource      string
+	AuthApplication string
+	AdmissionTTL    time.Duration
 }
 
+// ErrOperationConflict marks a retry of an unban operation id with a changed
+// payload; the HTTP admin API maps it to 409.
+var ErrOperationConflict = errors.New("operation id reused with a different payload")
+
 type Store struct {
-	client     redis.UniversalClient
-	cfg        Config
-	checkSHA   string
-	observeSHA string
-	recordAuthSHA string
-	enrichSHA  string
-	mu         sync.RWMutex
-	fenceGen   map[string]string // app -> generation
+	client redis.UniversalClient
+	cfg    Config
+	// *redis.Script keeps the source so Script.Run retries with EVAL after a
+	// SCRIPT FLUSH or a Redis failover loses the script cache.
+	checkScript      *redis.Script
+	observeScript    *redis.Script
+	recordAuthScript *redis.Script
+	enrichScript     *redis.Script
+	policyScript     *redis.Script
+	unbanScript      *redis.Script
+
+	mu        sync.RWMutex
+	fenceGen  map[string]string
+	configs   map[string]policy.Config // converged from Redis on every replica
+	configRev map[string]uint64        // revision each cached config was loaded at
 }
 
 type Inspection struct {
-	Action      event.Action
-	ExpiresAt   time.Time
-	Revision    uint64
-	Mode        event.Mode
-	Generation  string
-	Explanation string
+	Action       event.Action
+	ExpiresAt    time.Time
+	Revision     uint64
+	Mode         event.Mode
+	Generation   string
+	Explanation  string
+	OriginStatus int
+	ResponseSeen bool
 }
 
 type UnbanRequest struct {
@@ -56,12 +74,21 @@ type UnbanRequest struct {
 
 type UnbanResult struct {
 	Generation      string
+	OperationID     string
 	SuppressedUntil time.Time
 }
 
 type Page struct {
 	Items      []Inspection
 	NextCursor string
+}
+
+func mustScript(name string) *redis.Script {
+	src, err := scriptsFS.ReadFile("scripts/" + name)
+	if err != nil {
+		panic(err)
+	}
+	return redis.NewScript(string(src))
 }
 
 func New(client redis.UniversalClient, cfg Config) (*Store, error) {
@@ -74,59 +101,99 @@ func New(client redis.UniversalClient, cfg Config) (*Store, error) {
 	if cfg.Apps == nil {
 		cfg.Apps = map[string]policy.Config{"sample_app": policy.DefaultConfig()}
 	}
-	checkSrc, err := scriptsFS.ReadFile("scripts/check.lua")
-	if err != nil {
-		return nil, err
+	if cfg.AdmissionTTL <= 0 {
+		cfg.AdmissionTTL = 120 * time.Second
 	}
-	observeSrc, err := scriptsFS.ReadFile("scripts/observe.lua")
-	if err != nil {
-		return nil, err
+	if cfg.AuthSource == "" {
+		cfg.AuthSource = "login-app"
 	}
-	checkSHA, err := client.ScriptLoad(context.Background(), string(checkSrc)).Result()
-	if err != nil {
-		return nil, err
+	// The auth listener is bound to exactly one application. With several
+	// configured apps an explicit auth_application is expected in production;
+	// the defaults below stay fail-closed by binding to a single app and
+	// rejecting receipts for every other app.
+	if cfg.AuthApplication == "" {
+		if _, ok := cfg.Apps["sample_app"]; ok {
+			cfg.AuthApplication = "sample_app"
+		} else if len(cfg.Apps) == 1 {
+			for app := range cfg.Apps {
+				cfg.AuthApplication = app
+			}
+		} else {
+			apps := make([]string, 0, len(cfg.Apps))
+			for app := range cfg.Apps {
+				apps = append(apps, app)
+			}
+			sort.Strings(apps)
+			cfg.AuthApplication = apps[0]
+		}
 	}
-	observeSHA, err := client.ScriptLoad(context.Background(), string(observeSrc)).Result()
-	if err != nil {
-		return nil, err
-	}
-	recordAuthSrc, err := scriptsFS.ReadFile("scripts/record_auth.lua")
-	if err != nil {
-		return nil, err
-	}
-	recordAuthSHA, err := client.ScriptLoad(context.Background(), string(recordAuthSrc)).Result()
-	if err != nil {
-		return nil, err
-	}
-	enrichSrc, err := scriptsFS.ReadFile("scripts/enrich.lua")
-	if err != nil {
-		return nil, err
-	}
-	enrichSHA, err := client.ScriptLoad(context.Background(), string(enrichSrc)).Result()
-	if err != nil {
-		return nil, err
+	if _, ok := cfg.Apps[cfg.AuthApplication]; !ok {
+		return nil, fmt.Errorf("auth application %q is not configured", cfg.AuthApplication)
 	}
 	s := &Store{
-		client:     client,
-		cfg:        cfg,
-		checkSHA:   checkSHA,
-		observeSHA: observeSHA,
-		recordAuthSHA: recordAuthSHA,
-		enrichSHA:  enrichSHA,
-		fenceGen:   map[string]string{},
+		client:           client,
+		cfg:              cfg,
+		checkScript:      mustScript("check.lua"),
+		observeScript:    mustScript("observe.lua"),
+		recordAuthScript: mustScript("record_auth.lua"),
+		enrichScript:     mustScript("enrich.lua"),
+		policyScript:     mustScript("policy.lua"),
+		unbanScript:      mustScript("unban.lua"),
+		fenceGen:         map[string]string{},
+		configs:          map[string]policy.Config{},
+		configRev:        map[string]uint64{},
 	}
-	for app := range cfg.Apps {
-		modeKey := s.modeKey(app)
-		_ = client.SetNX(context.Background(), modeKey, string(cfg.DefaultMode), 0).Err()
+	ctx := context.Background()
+	for _, script := range []*redis.Script{s.checkScript, s.observeScript, s.recordAuthScript, s.enrichScript, s.policyScript, s.unbanScript} {
+		if err := script.Load(ctx, client).Err(); err != nil {
+			return nil, err
+		}
+	}
+	for app, c := range cfg.Apps {
+		c = policy.WithDefaults(c)
+		if err := policy.Validate(c); err != nil {
+			return nil, fmt.Errorf("app %s: %w", app, err)
+		}
+		s.configs[app] = c
+		_ = client.SetNX(ctx, s.modeKey(app), string(cfg.DefaultMode), 0).Err()
 	}
 	return s, nil
 }
 
-func (s *Store) appCfg(app string) policy.Config {
-	if c, ok := s.cfg.Apps[app]; ok {
-		return c
+// appCfgAt prefers the config converged from Redis so PUT policy updates apply
+// to every replica. The admission revision is the cache key: a policy change
+// advances it, so in-flight events from the old revision use the old rules and
+// new admissions immediately see the published config.
+func (s *Store) appCfgAt(ctx context.Context, app string, rev uint64) (policy.Config, error) {
+	s.mu.RLock()
+	c, ok := s.configs[app]
+	loadedRev := s.configRev[app]
+	s.mu.RUnlock()
+	if ok && (rev == 0 || loadedRev == rev) {
+		return c, nil
 	}
-	return policy.DefaultConfig()
+	// A newer revision must be loaded from Redis or the operation fails closed;
+	// falling back to a cached older config would persist under wrong rules.
+	raw, err := s.client.Get(ctx, s.policyConfigKey(app)).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return policy.Config{}, fmt.Errorf("policy config missing for revision %d", rev)
+		}
+		return policy.Config{}, err
+	}
+	var loaded policy.Config
+	if err := json.Unmarshal([]byte(raw), &loaded); err != nil {
+		return policy.Config{}, fmt.Errorf("policy config invalid: %w", err)
+	}
+	loaded = policy.WithDefaults(loaded)
+	if err := policy.Validate(loaded); err != nil {
+		return policy.Config{}, fmt.Errorf("policy config invalid: %w", err)
+	}
+	s.mu.Lock()
+	s.configs[app] = loaded
+	s.configRev[app] = rev
+	s.mu.Unlock()
+	return loaded, nil
 }
 
 func (s *Store) prefix(parts ...string) string {
@@ -137,60 +204,42 @@ func (s *Store) prefix(parts ...string) string {
 	return out
 }
 
-func (s *Store) banKey(app string, ip netip.Addr) string {
-	return s.prefix("ban", app, ip.String())
-}
-
-func (s *Store) metaKey(app string, ip netip.Addr) string {
-	return s.prefix("meta", app, ip.String())
-}
-
-func (s *Store) modeKey(app string) string {
-	return s.prefix("mode", app)
-}
-
-func (s *Store) supKey(app string, ip netip.Addr) string {
-	return s.prefix("sup", app, ip.String())
-}
-
-func (s *Store) authKey(app, requestID string) string {
-	return s.prefix("auth", app, requestID)
-}
-
+func (s *Store) banKey(app string, ip netip.Addr) string  { return s.prefix("ban", app, ip.String()) }
+func (s *Store) metaKey(app string, ip netip.Addr) string { return s.prefix("meta", app, ip.String()) }
+func (s *Store) modeKey(app string) string                { return s.prefix("mode", app) }
+func (s *Store) supKey(app string, ip netip.Addr) string  { return s.prefix("sup", app, ip.String()) }
+func (s *Store) authKey(app, requestID string) string     { return s.prefix("auth", app, requestID) }
 func (s *Store) bruteKey(app string, ip netip.Addr) string {
 	return s.prefix("brute", app, ip.String())
 }
-
-func (s *Store) dedupeKey(eventID string) string {
-	return s.prefix("dedupe", eventID)
-}
-
+func (s *Store) dedupeKey(eventID string) string { return s.prefix("dedupe", eventID) }
 func (s *Store) contribKey(app string, ip netip.Addr) string {
 	return s.prefix("contrib", app, ip.String())
 }
-
-func (s *Store) fenceKey(app string) string {
-	return s.prefix("fence", app)
+func (s *Store) fenceKey(app string) string { return s.prefix("fence", app) }
+func (s *Store) admissionKey(app, requestID string) string {
+	return s.prefix("admission", app, requestID)
 }
+func (s *Store) policyRevKey(app string) string    { return s.prefix("policy", app) + ":revision" }
+func (s *Store) policyConfigKey(app string) string { return s.prefix("policy", app) + ":config" }
+func (s *Store) unbanOpKey(opID string) string     { return s.prefix("unban-op", opID) }
 
-func (s *Store) Healthy(ctx context.Context) error {
-	return s.client.Ping(ctx).Err()
-}
+func (s *Store) Healthy(ctx context.Context) error { return s.client.Ping(ctx).Err() }
+
+// AuthApplication is the single app this auth listener/source is bound to.
+func (s *Store) AuthApplication() string { return s.cfg.AuthApplication }
 
 func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, error) {
 	ip := req.ClientIP
 	app := req.Application
-	nowMS := time.Now().UnixMilli()
 	keys := []string{
-		s.banKey(app, ip),
-		s.metaKey(app, ip),
-		s.modeKey(app),
-		s.supKey(app, ip),
-		s.fenceKey(app),
+		s.banKey(app, ip), s.metaKey(app, ip), s.modeKey(app), s.supKey(app, ip),
+		s.fenceKey(app), s.policyRevKey(app), s.admissionKey(app, req.RequestID),
+		s.policyConfigKey(app),
 	}
-	res, err := s.client.EvalSha(ctx, s.checkSHA, keys,
-		strconv.FormatInt(nowMS, 10),
-		string(s.cfg.DefaultMode),
+	res, err := s.checkScript.Run(ctx, s.client, keys,
+		time.Now().UnixMilli(), string(s.cfg.DefaultMode), req.RequestID,
+		s.admissionTTL().Milliseconds(), ip.String(), app,
 	).Result()
 	if err != nil {
 		return event.UnknownDecision(true), err
@@ -217,6 +266,14 @@ func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, e
 	if action == event.ActionBan {
 		d.Action = event.ActionBan
 	}
+	if len(row) > 5 {
+		switch fmt.Sprint(row[5]) {
+		case "suppressed":
+			d.Explanation = "suppressed"
+		case "observe-mode":
+			d.Explanation = "observe-mode"
+		}
+	}
 	return d, nil
 }
 
@@ -224,12 +281,21 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 	if ev.OwnRejection {
 		return nil
 	}
-	cfg := s.appCfg(ev.Request.Application)
+	app := ev.Request.Application
+	var rev uint64
+	if ev.Admission != nil {
+		rev = ev.Admission.Revision
+	}
+	cfg, err := s.appCfgAt(ctx, app, rev)
+	if err != nil {
+		return err
+	}
 	deny := 0
-	if policy.WAFDenyContribution(ev, cfg) {
+	// Response observation is a separate signal. Reusing the request verdict
+	// here would count the same request twice in the deny window.
+	if ev.Kind != event.KindObserveResponse && policy.WAFDenyContribution(ev, cfg) {
 		deny = 1
 	}
-	nowMS := time.Now().UnixMilli()
 	admissionGen := ""
 	admissionAt := int64(0)
 	if ev.Admission != nil {
@@ -237,87 +303,141 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		admissionAt = ev.Admission.At.UnixMilli()
 	}
 	keys := []string{
-		s.dedupeKey(ev.ID),
-		s.contribKey(ev.Request.Application, ev.Request.ClientIP),
-		s.banKey(ev.Request.Application, ev.Request.ClientIP),
-		s.metaKey(ev.Request.Application, ev.Request.ClientIP),
-		s.modeKey(ev.Request.Application),
-		s.fenceKey(ev.Request.Application),
-		s.authKey(ev.Request.Application, ev.Request.RequestID),
-		s.bruteKey(ev.Request.Application, ev.Request.ClientIP),
+		s.dedupeKey(ev.ID), s.contribKey(app, ev.Request.ClientIP),
+		s.banKey(app, ev.Request.ClientIP), s.metaKey(app, ev.Request.ClientIP),
+		s.modeKey(app), s.fenceKey(app), s.authKey(app, ev.Request.RequestID),
+		s.bruteKey(app, ev.Request.ClientIP),
+		s.admissionKey(app, ev.Request.RequestID), s.policyRevKey(app),
+		s.supKey(app, ev.Request.ClientIP),
 	}
-	_, err := s.client.EvalSha(ctx, s.observeSHA, keys,
-		ev.ID,
-		strconv.FormatInt(nowMS, 10),
-		strconv.Itoa(deny),
-		strconv.Itoa(cfg.WAFDenyWindowSec),
-		strconv.Itoa(cfg.WAFDenyThreshold),
-		strconv.Itoa(cfg.WAFDenyBanSec),
-		string(s.cfg.DefaultMode),
-		admissionGen,
-		strconv.Itoa(cfg.MaxEventAgeSec*1000),
-		strconv.FormatInt(admissionAt, 10),
-		strconv.Itoa(cfg.BruteWindowSec),
-		strconv.Itoa(cfg.BruteFailures),
-		ev.Request.RequestID,
+	originStatus, finalStatus := "", ""
+	if ev.OriginStatus != nil {
+		originStatus = strconv.Itoa(*ev.OriginStatus)
+	}
+	if ev.FinalClientStatus != nil {
+		finalStatus = strconv.Itoa(*ev.FinalClientStatus)
+	}
+	_, err = s.observeScript.Run(ctx, s.client, keys,
+		ev.ID, time.Now().UnixMilli(), deny,
+		cfg.WAFDenyWindowSec, cfg.WAFDenyThreshold, cfg.WAFDenyBanSec,
+		string(s.cfg.DefaultMode), admissionGen, cfg.MaxEventAgeSec*1000,
+		admissionAt, cfg.BruteWindowSec, cfg.BruteFailures,
+		ev.Request.RequestID, app, ev.Request.ClientIP.String(),
+		originStatus, finalStatus, strconv.FormatUint(rev, 10),
 	).Result()
 	return err
 }
 
 func (s *Store) RecordAuth(ctx context.Context, receipt policy.AuthReceipt) error {
-	verdictID := event.EventID(receipt.Application, receipt.RequestID, event.KindWafVerdict)
-	cfg := s.appCfg(receipt.Application)
+	app := receipt.Application
+	if receipt.SourceID != s.cfg.AuthSource {
+		return fmt.Errorf("auth source %q not trusted for app %q", receipt.SourceID, app)
+	}
+	if app != s.cfg.AuthApplication {
+		return fmt.Errorf("auth application %q not bound to this listener (bound to %q)", app, s.cfg.AuthApplication)
+	}
+	verdictID := event.EventID(app, receipt.RequestID, event.KindWafVerdict)
+	// The client IP comes from the admission token, never from the caller.
+	tokenKey := s.admissionKey(app, receipt.RequestID)
+	ipStr, err := s.client.HGet(ctx, tokenKey, "ip").Result()
+	if err != nil {
+		return fmt.Errorf("no admission for auth receipt: %w", err)
+	}
+	ip, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return fmt.Errorf("bad admission ip %q: %w", ipStr, err)
+	}
+	revStr, err := s.client.HGet(ctx, tokenKey, "rev").Result()
+	if err != nil {
+		return fmt.Errorf("no admission revision for auth receipt: %w", err)
+	}
+	rev, err := strconv.ParseUint(revStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("bad admission revision %q: %w", revStr, err)
+	}
+	cfg, err := s.appCfgAt(ctx, app, rev)
+	if err != nil {
+		return err
+	}
 	keys := []string{
-		s.authKey(receipt.Application, receipt.RequestID),
-		s.dedupeKey(verdictID),
+		s.authKey(app, receipt.RequestID), s.dedupeKey(verdictID),
+		s.bruteKey(app, ip), s.banKey(app, ip),
+		s.modeKey(app), tokenKey, s.fenceKey(app), s.metaKey(app, ip),
+		s.supKey(app, ip), s.policyRevKey(app),
 	}
-	args := []interface{}{
-		string(receipt.Outcome),
-		receipt.SourceID,
-		strconv.FormatInt(time.Now().UnixMilli(), 10),
-		strconv.Itoa(cfg.BruteWindowSec),
-		strconv.Itoa(cfg.BruteFailures),
-		strconv.Itoa(cfg.WAFDenyBanSec),
-		receipt.RequestID,
-		string(s.cfg.DefaultMode),
+	res, err := s.recordAuthScript.Run(ctx, s.client, keys,
+		string(receipt.Outcome), receipt.SourceID, time.Now().UnixMilli(),
+		cfg.BruteWindowSec, cfg.BruteFailures, cfg.WAFDenyBanSec,
+		receipt.RequestID, string(s.cfg.DefaultMode), s.cfg.AuthSource, app,
+		cfg.MaxEventAgeSec*1000, 24*60*60, ip.String(), strconv.FormatUint(rev, 10),
+	).Result()
+	if err != nil {
+		return err
 	}
-	ip := receipt.ClientIP
-	if !ip.IsValid() {
-		ip = netip.IPv4Unspecified()
+	row, ok := res.([]interface{})
+	if !ok || len(row) < 1 {
+		return fmt.Errorf("bad auth result")
 	}
-	keys = append(keys,
-		s.bruteKey(receipt.Application, ip),
-		s.banKey(receipt.Application, ip),
-		s.modeKey(receipt.Application),
-	)
-	_, err := s.client.EvalSha(ctx, s.recordAuthSHA, keys, args...).Result()
-	return err
+	// Only a persisted record or a genuine duplicate is a successful write.
+	switch fmt.Sprint(row[0]) {
+	case "ok", "duplicate", "brute_banned", "suppressed":
+		return nil
+	default:
+		return fmt.Errorf("auth receipt %s: %v", fmt.Sprint(row[0]), row)
+	}
 }
 
+// Unban requires a caller-supplied, non-empty operation id: it is the
+// idempotency key. Reusing it with a different payload is a conflict.
 func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error) {
-	gen := fmt.Sprintf("unban-%d", time.Now().UnixNano())
-	pipe := s.client.Pipeline()
-	pipe.Del(ctx, s.banKey(req.Application, req.ClientIP))
-	pipe.Del(ctx, s.contribKey(req.Application, req.ClientIP))
-	if req.Suppression > 0 {
-		until := time.Now().Add(req.Suppression).UnixMilli()
-		pipe.Set(ctx, s.supKey(req.Application, req.ClientIP), until, req.Suppression)
+	opID := req.OperationID
+	if opID == "" {
+		return UnbanResult{}, fmt.Errorf("operation_id required")
 	}
-	pipe.HSet(ctx, s.metaKey(req.Application, req.ClientIP), "generation", gen)
-	pipe.Set(ctx, s.fenceKey(req.Application), gen, 24*time.Hour)
-	_, err := pipe.Exec(ctx)
+	if req.Suppression < 0 {
+		return UnbanResult{}, fmt.Errorf("suppression must be >= 0")
+	}
+	gen := fmt.Sprintf("unban-%d", time.Now().UnixNano())
+	keys := []string{
+		s.unbanOpKey(opID), s.banKey(req.Application, req.ClientIP),
+		s.contribKey(req.Application, req.ClientIP), s.supKey(req.Application, req.ClientIP),
+		s.metaKey(req.Application, req.ClientIP), s.fenceKey(req.Application),
+		s.bruteKey(req.Application, req.ClientIP),
+	}
+	res, err := s.unbanScript.Run(ctx, s.client, keys,
+		opID, gen, time.Now().UnixMilli(), req.Suppression.Milliseconds(),
+		(24 * time.Hour).Milliseconds(), req.Application, req.ClientIP.String(), req.Reason,
+	).Result()
 	if err != nil {
 		return UnbanResult{}, err
 	}
+	row, ok := res.([]interface{})
+	if !ok || len(row) < 1 {
+		return UnbanResult{}, fmt.Errorf("bad unban result")
+	}
+	resultGen := fmt.Sprint(row[0])
+	if resultGen == "conflict" {
+		return UnbanResult{}, ErrOperationConflict
+	}
+	if len(row) < 2 {
+		return UnbanResult{}, fmt.Errorf("bad unban result")
+	}
+	expMS, err := strconv.ParseInt(fmt.Sprint(row[1]), 10, 64)
+	if err != nil {
+		return UnbanResult{}, fmt.Errorf("bad stored suppression expiry: %w", err)
+	}
 	s.mu.Lock()
-	s.fenceGen[req.Application] = gen
+	s.fenceGen[req.Application] = resultGen
 	s.mu.Unlock()
-	return UnbanResult{Generation: gen, SuppressedUntil: time.Now().Add(req.Suppression)}, nil
+	return UnbanResult{
+		Generation:      resultGen,
+		OperationID:     opID,
+		SuppressedUntil: time.UnixMilli(expMS),
+	}, nil
 }
 
 func (s *Store) PolicyRevision(ctx context.Context, app string) (uint64, error) {
-	revKey := s.prefix("policy", app) + ":revision"
-	rev, err := s.client.Get(ctx, revKey).Uint64()
+	rev, err := s.client.Get(ctx, s.policyRevKey(app)).Uint64()
 	if err == redis.Nil {
 		return 0, nil
 	}
@@ -325,6 +445,7 @@ func (s *Store) PolicyRevision(ctx context.Context, app string) (uint64, error) 
 }
 
 func (s *Store) ValidatePolicyUpdate(ctx context.Context, app string, expectedRevision uint64, cfg policy.Config) (uint64, error) {
+	cfg = policy.WithDefaults(cfg)
 	if err := policy.Validate(cfg); err != nil {
 		return 0, err
 	}
@@ -339,38 +460,49 @@ func (s *Store) ValidatePolicyUpdate(ctx context.Context, app string, expectedRe
 }
 
 func (s *Store) SetPolicy(ctx context.Context, app string, expectedRevision uint64, cfg policy.Config, mode event.Mode) (uint64, error) {
-	meta := s.prefix("policy", app)
-	revKey := meta + ":revision"
-	rev, err := s.client.Get(ctx, revKey).Uint64()
-	if err == redis.Nil {
-		rev = 0
-	} else if err != nil {
+	cfg = policy.WithDefaults(cfg)
+	if err := policy.Validate(cfg); err != nil {
 		return 0, err
 	}
-	if expectedRevision != rev {
-		return rev, fmt.Errorf("stale revision: have %d want %d", rev, expectedRevision)
+	if mode != event.ModeObserve && mode != event.ModeEnforce {
+		return 0, fmt.Errorf("unsupported mode %q", mode)
 	}
-	newRev := rev + 1
-	pipe := s.client.Pipeline()
-	pipe.Set(ctx, s.modeKey(app), string(mode), 0)
-	pipe.Set(ctx, revKey, newRev, 0)
-	pipe.Set(ctx, s.fenceKey(app), fmt.Sprintf("rev-%d", newRev), 24*time.Hour)
-	_, err = pipe.Exec(ctx)
-	return newRev, err
-}
-
-func (s *Store) enrichKey(app, requestID string) string {
-	return s.prefix("enrich", app, requestID)
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return 0, err
+	}
+	newFence := fmt.Sprintf("rev-%d", expectedRevision+1)
+	res, err := s.policyScript.Run(ctx, s.client,
+		[]string{s.policyRevKey(app), s.policyConfigKey(app), s.modeKey(app), s.fenceKey(app)},
+		expectedRevision, string(raw), string(mode), newFence, (24 * time.Hour).Milliseconds(),
+	).Result()
+	if err != nil {
+		return 0, err
+	}
+	row, ok := res.([]interface{})
+	if !ok || len(row) < 2 {
+		return 0, fmt.Errorf("bad policy result")
+	}
+	if fmt.Sprint(row[0]) == "stale" {
+		have, _ := strconv.ParseUint(fmt.Sprint(row[1]), 10, 64)
+		return have, fmt.Errorf("stale revision: have %d want %d", have, expectedRevision)
+	}
+	rev, err := strconv.ParseUint(fmt.Sprint(row[1]), 10, 64)
+	if err == nil {
+		s.mu.Lock()
+		s.configs[app] = cfg
+		s.configRev[app] = rev
+		s.fenceGen[app] = newFence
+		s.mu.Unlock()
+	}
+	return rev, err
 }
 
 func (s *Store) Enrich(ctx context.Context, m enrich.Match) error {
 	tags, _ := json.Marshal(m.Tags)
-	_, err := s.client.EvalSha(ctx, s.enrichSHA, []string{s.enrichKey(m.Application, m.RequestID)},
-		strconv.FormatUint(uint64(m.RuleID), 10),
-		string(tags),
-		strconv.Itoa(m.Severity),
-		strconv.Itoa(m.PhaseID),
-		"3600",
+	_, err := s.enrichScript.Run(ctx, s.client, []string{s.enrichKey(m.Application, m.RequestID)},
+		strconv.FormatUint(uint64(m.RuleID), 10), string(tags), strconv.Itoa(m.Severity),
+		strconv.Itoa(m.PhaseID), "3600",
 	).Result()
 	return err
 }
@@ -385,15 +517,26 @@ func (s *Store) Inspect(ctx context.Context, app string, mode event.Mode, ip net
 	if err != nil {
 		return Inspection{}, err
 	}
-	insp := Inspection{Action: dec.Action, ExpiresAt: dec.ExpiresAt}
+	insp := Inspection{Action: dec.Action, ExpiresAt: dec.ExpiresAt, Explanation: dec.Explanation}
 	if dec.Admission != nil {
 		insp.Revision = dec.Admission.Revision
 		insp.Mode = dec.Admission.Mode
 		insp.Generation = dec.Admission.Generation
 	}
+	meta := s.client.HGetAll(ctx, s.metaKey(app, ip)).Val()
+	if st, err := strconv.Atoi(meta["origin_status"]); err == nil {
+		insp.OriginStatus = st
+	}
+	insp.ResponseSeen = meta["response_seen"] == "1"
 	return insp, nil
 }
 
 func (s *Store) List(ctx context.Context, app string, mode event.Mode, cursor string, limit int) (Page, error) {
 	return Page{Items: nil, NextCursor: ""}, nil
+}
+
+func (s *Store) admissionTTL() time.Duration { return s.cfg.AdmissionTTL }
+
+func (s *Store) enrichKey(app, requestID string) string {
+	return s.prefix("enrich", app, requestID)
 }

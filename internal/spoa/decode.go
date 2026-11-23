@@ -26,6 +26,26 @@ func parseAddrValue(kv *encoding.KVEntry) (netip.Addr, error) {
 	return netip.Addr{}, fmt.Errorf("invalid IP address")
 }
 
+// kvValueString accepts both wire forms: legacy string values and native
+// typed SPOE integers/bools written with SetInt64/SetUInt64/SetBool.
+func kvValueString(kv *encoding.KVEntry) string {
+	switch kv.Type() {
+	case encoding.DataTypeInt32, encoding.DataTypeInt64:
+		return strconv.FormatInt(kv.ValueInt(), 10)
+	case encoding.DataTypeUInt32, encoding.DataTypeUInt64:
+		return strconv.FormatUint(uint64(kv.ValueInt()), 10)
+	case encoding.DataTypeBool:
+		if kv.ValueBool() {
+			return "true"
+		}
+		return "false"
+	case encoding.DataTypeIPV4, encoding.DataTypeIPV6:
+		return kv.ValueAddr().String()
+	default:
+		return string(kv.ValueBytes())
+	}
+}
+
 func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event.Event, event.InvalidReason, error) {
 	kind := event.Kind(name)
 	phase, ok := event.PhaseForKind(kind)
@@ -44,7 +64,7 @@ func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event
 	defer encoding.ReleaseKVEntry(kv)
 	for m.KV.Next(kv) {
 		key := string(kv.NameBytes())
-		val := string(kv.ValueBytes())
+		val := kvValueString(kv)
 		switch key {
 		case "schema_version":
 			v, err := strconv.ParseUint(val, 10, 16)

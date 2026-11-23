@@ -1,52 +1,112 @@
 package enrich
 
 import (
-	"bufio"
 	"context"
+	"io"
 	"os"
 	"strings"
 	"time"
 )
 
-// TailJSONL polls path and ingests complete JSON lines (Coraza stock json logs).
+type tailState struct {
+	offset int64
+	info   os.FileInfo
+}
+
+// TailJSONL polls path and ingests only complete, newline-terminated JSONL
+// records. The offset advances past a record only after it is persisted.
 func TailJSONL(ctx context.Context, path string, source Source, limits Limits, ingest func(context.Context, Match) error) {
-	var offset int64
+	var state tailState
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		offset = readFromOffset(ctx, path, offset, source, limits, ingest)
+		state = readFrom(ctx, path, state, source, limits, ingest)
 		time.Sleep(200 * time.Millisecond)
 	}
 }
 
-func readFromOffset(ctx context.Context, path string, offset int64, source Source, limits Limits, ingest func(context.Context, Match) error) int64 {
+func readFrom(ctx context.Context, path string, state tailState, source Source, limits Limits, ingest func(context.Context, Match) error) tailState {
 	f, err := os.Open(path)
 	if err != nil {
-		return offset
+		return state
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := f.Seek(offset, 0); err != nil {
-		return offset
+	fi, err := f.Stat()
+	if err != nil {
+		return state
 	}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), limits.MaxLineBytes+1)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
+	if state.info != nil {
+		if !os.SameFile(state.info, fi) || state.offset > fi.Size() {
+			// Rotation or truncation: the old offset points past the new data.
+			state.offset = 0
 		}
-		m, err := Parse(strings.NewReader(line), source, limits)
-		if err != nil {
-			continue
-		}
-		if m.RequestID == "" {
-			continue
-		}
-		_ = ingest(ctx, m)
 	}
-	pos, _ := f.Seek(0, 1)
-	return pos
+	state.info = fi
+	if state.offset > fi.Size() {
+		state.offset = 0
+	}
+	if _, err := f.Seek(state.offset, io.SeekStart); err != nil {
+		return state
+	}
+	max := limits.MaxLineBytes
+	if max <= 0 {
+		max = 32 << 10
+	}
+	lineStart := state.offset
+	pos := state.offset
+	buf := make([]byte, 0, 4096)
+	oversized := false
+	chunk := make([]byte, 8192)
+	for {
+		n, readErr := f.Read(chunk)
+		for _, b := range chunk[:n] {
+			pos++
+			if b == '\n' {
+				// A newline closes a record; the line spans lineStart..pos-1.
+				if oversized {
+					state.offset = pos
+					lineStart = pos
+					buf = buf[:0]
+					oversized = false
+					continue
+				}
+				line := strings.TrimSpace(string(buf))
+				buf = buf[:0]
+				if line != "" {
+					if m, err := Parse(strings.NewReader(line), source, limits); err == nil && m.RequestID != "" {
+						if err := ingest(ctx, m); err != nil {
+							// Retryable persistence failure: keep the offset on
+							// this record so it is replayed on the next poll.
+							state.offset = lineStart
+							return state
+						}
+					}
+				}
+				state.offset = pos
+				lineStart = pos
+				continue
+			}
+			if !oversized {
+				if len(buf) < max {
+					buf = append(buf, b)
+				} else {
+					// Skip the rest of this oversized line without buffering it.
+					buf = buf[:0]
+					oversized = true
+				}
+			}
+		}
+		if readErr == io.EOF {
+			// An unterminated trailing record stays uncommitted; it will be
+			// re-read once the writer appends the newline.
+			return state
+		}
+		if readErr != nil || ctx.Err() != nil {
+			state.offset = lineStart
+			return state
+		}
+	}
 }

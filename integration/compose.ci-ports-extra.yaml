@@ -1,0 +1,6 @@
+# Additional isolated ports for the failover overlay.
+services:
+  redis-replica:
+    ports: !override ["127.0.0.1:36380:6379"]
+  redis-sentinel:
+    ports: !override ["127.0.0.1:36381:26379"]

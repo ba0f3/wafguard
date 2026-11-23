@@ -1,0 +1,5 @@
+services:
+  redis-replica:
+    ports: !override ["127.0.0.1:46380:6379"]
+  redis-sentinel:
+    ports: !override ["127.0.0.1:46381:26379"]

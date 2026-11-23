@@ -25,18 +25,18 @@ type Telemetry interface {
 type noopTelemetry struct{}
 
 func (noopTelemetry) RecordOperation(_, _ string, _ time.Duration) {}
-func (noopTelemetry) RecordEvent(_, _ string)                     {}
-func (noopTelemetry) RecordDrop(_ string)                         {}
-func (noopTelemetry) IncInflight()                                  {}
-func (noopTelemetry) DecInflight()                                  {}
+func (noopTelemetry) RecordEvent(_, _ string)                      {}
+func (noopTelemetry) RecordDrop(_ string)                          {}
+func (noopTelemetry) IncInflight()                                 {}
+func (noopTelemetry) DecInflight()                                 {}
 
 // Handler serves behavioral SPOE messages.
 type Handler struct {
-	Backend   Backend
-	Limits    event.Limits
-	Timeout   time.Duration
+	Backend     Backend
+	Limits      event.Limits
+	Timeout     time.Duration
 	MaxInflight int
-	Telemetry Telemetry
+	Telemetry   Telemetry
 
 	sem chan struct{}
 }
@@ -126,19 +126,11 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		h.Telemetry.RecordEvent(string(ev.Kind), string(d.Action))
 	case event.KindWafVerdict, event.KindObserveResponse:
 		if ev.Admission == nil {
-			if ev.RequestWAF.Action == "" {
-				result = "missing_admission"
-				h.Telemetry.RecordDrop("missing_admission")
-				return
-			}
-			// shortcut: HAProxy does not pass admission txn vars into later SPOE message args in this lab
-			d, err := h.Backend.Check(opCtx, ev.Request)
-			if err != nil || d.Admission == nil {
-				result = "missing_admission"
-				h.Telemetry.RecordDrop("missing_admission")
-				return
-			}
-			ev.Admission = d.Admission
+			// A delayed observation needs the real admission token minted at
+			// check-ban time. Synthesizing one would let a stale event look fresh.
+			result = "missing_admission"
+			h.Telemetry.RecordDrop("missing_admission")
+			return
 		}
 		if err := h.Backend.Observe(opCtx, ev); err != nil {
 			result = "observe_error"
@@ -151,4 +143,3 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		result = "unknown_kind"
 	}
 }
-

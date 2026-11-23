@@ -5,7 +5,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "26379:26379"
+      - "127.0.0.1:26379:26379"
     command:
       - sh
       - -c

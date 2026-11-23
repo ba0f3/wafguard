@@ -15,6 +15,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func adminWriteToken() string {
+	if t := os.Getenv("WAF_ADMIN_TOKEN"); t != "" {
+		return t
+	}
+	return "operator-lab-only"
+}
+
 func adminWriteURL() string {
 	if u := os.Getenv("WAF_ADMIN_URL"); u != "" {
 		return u
@@ -49,6 +56,7 @@ func TestHTTPUnbanRaceTwoWafguards(t *testing.T) {
 	})
 	unbanReq, _ := http.NewRequest(http.MethodPost, adminWriteURL()+"/v1/apps/sample_app/unban", bytes.NewReader(body))
 	unbanReq.Header.Set("Content-Type", "application/json")
+	unbanReq.Header.Set("X-Wafguard-Auth-Token", adminWriteToken())
 	r, err := client.Do(unbanReq)
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +114,7 @@ func TestHTTPUnbanHeldAdmissionRelease(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"client_ip": ip, "operation_id": "unban-held-1"})
 	unbanReq, _ := http.NewRequest(http.MethodPost, adminWriteURL()+"/v1/apps/sample_app/unban", bytes.NewReader(body))
 	unbanReq.Header.Set("Content-Type", "application/json")
+	unbanReq.Header.Set("X-Wafguard-Auth-Token", adminWriteToken())
 
 	var wg sync.WaitGroup
 	wg.Add(2)

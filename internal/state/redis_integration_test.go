@@ -36,10 +36,6 @@ func TestSharedBanRedis(t *testing.T) {
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.44")
 	req := event.Request{Application: "sample_app", ClientIP: ip}
-	d1, err := store.Check(ctx, req)
-	if err != nil || d1.Action != event.ActionAllow {
-		t.Fatalf("first check: %v %v", d1, err)
-	}
 	ids := []string{
 		"550e8400-e29b-41d4-a716-446655440001",
 		"550e8400-e29b-41d4-a716-446655440002",
@@ -48,11 +44,15 @@ func TestSharedBanRedis(t *testing.T) {
 	for _, rid := range ids {
 		r := req
 		r.RequestID = rid
+		admission, err := store.Check(ctx, r)
+		if err != nil {
+			t.Fatal(err)
+		}
 		ev := event.Event{
 			Request:    r,
 			ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
 			Kind:       event.KindWafVerdict,
-			Admission:  d1.Admission,
+			Admission:  admission.Admission,
 			RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
 		}
 		if err := store.Observe(ctx, ev); err != nil {

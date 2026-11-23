@@ -3,7 +3,7 @@ services:
     volumes:
       - ../deploy/wafguard.enforce.json:/etc/wafguard/config.json:ro
     ports:
-      - "19200:19200"
+      - "127.0.0.1:19200:19200"
   wafguard2:
     build:
       context: ..
@@ -26,4 +26,4 @@ services:
       - ../deploy/haproxy/coraza.cfg:/usr/local/etc/haproxy/coraza.cfg:ro
       - ../deploy/haproxy/wafguard.cfg:/usr/local/etc/haproxy/wafguard.cfg:ro
     ports:
-      - "18081:8080"
+      - "127.0.0.1:18081:8080"

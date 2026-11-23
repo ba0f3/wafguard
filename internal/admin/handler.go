@@ -27,6 +27,10 @@ type Access struct {
 	Application string
 }
 
+// RequestIDHeader carries the proxy-generated admission id. A client-supplied
+// request_id in the JSON body is never trusted for auth correlation.
+const RequestIDHeader = "X-Wafguard-Request-Id"
+
 func New(store *state.Store, access Access) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/apps/", func(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +100,10 @@ func New(store *state.Store, access Access) http.Handler {
 				http.Error(w, "bad ip", http.StatusBadRequest)
 				return
 			}
+			if strings.TrimSpace(body.OperationID) == "" {
+				http.Error(w, "operation_id required for idempotent unban", http.StatusBadRequest)
+				return
+			}
 			res, err := store.Unban(r.Context(), state.UnbanRequest{
 				Application: app,
 				ClientIP:    ip,
@@ -104,6 +112,10 @@ func New(store *state.Store, access Access) http.Handler {
 				Reason:      body.Reason,
 			})
 			if err != nil {
+				if errors.Is(err, state.ErrOperationConflict) {
+					http.Error(w, err.Error(), http.StatusConflict)
+					return
+				}
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -117,6 +129,12 @@ func New(store *state.Store, access Access) http.Handler {
 			if !decodeBody(w, r, &rcpt) {
 				return
 			}
+			proxyID := r.Header.Get(RequestIDHeader)
+			if err := event.ParseUUIDv4(proxyID); err != nil {
+				http.Error(w, "valid proxy request id required", http.StatusBadRequest)
+				return
+			}
+			rcpt.RequestID = proxyID
 			rcpt.Application = app
 			rcpt.SourceID = access.SourceID
 			if err := store.RecordAuth(r.Context(), rcpt); err != nil {
