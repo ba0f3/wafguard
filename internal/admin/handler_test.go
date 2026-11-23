@@ -68,4 +68,19 @@ func TestAdminRoles(t *testing.T) {
 			t.Fatalf("write unban: %d %s", w2.Code, w2.Body.String())
 		}
 	}
+
+	authH := admin.New(store, admin.Access{Role: admin.Auth, SourceID: "login"})
+	authBody := `{"request_id":"rid-auth","outcome":"failure"}`
+	authReq := httptest.NewRequest(http.MethodPost, "/v1/apps/sample_app/auth-outcomes", strings.NewReader(authBody))
+	authW := httptest.NewRecorder()
+	authH.ServeHTTP(authW, authReq)
+	if authW.Code != http.StatusNoContent {
+		t.Fatalf("auth POST %d", authW.Code)
+	}
+	writeAuth := httptest.NewRequest(http.MethodPost, "/v1/apps/sample_app/auth-outcomes", strings.NewReader(authBody))
+	writeAuthW := httptest.NewRecorder()
+	writeH.ServeHTTP(writeAuthW, writeAuth)
+	if writeAuthW.Code != http.StatusForbidden {
+		t.Fatalf("write on auth-outcomes %d", writeAuthW.Code)
+	}
 }

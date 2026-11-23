@@ -9,14 +9,15 @@
 | Stock drop | **PASS** | `it-stock` |
 | Failover → stock → rollout | **PASS** | `make it-gate-sequence` |
 | Body/Expect/timeout/affinity matrix | **PASS** | `make it-recorder-body` |
-| Recorder disconnect (precheck + verdict) | **PASS** | `TestStockRecorderDisconnect*` |
-| Dual Coraza + req/res correlation | **PASS** | `TestStockDualCorazaRoundRobinCorrelation` (c2 backup) |
-| Phase-4 isolation lab | **PASS (observed)** | `make it-phase4-only`, `docs/evidence/2026-11-23-body-affinity.md` |
-| Phase-4 response body benign + negative | **PASS** | `TestStockResponseBodyPhase4*` (evil via phase-3 header) |
+| Recorder disconnect | **PASS** | `TestStockRecorderDisconnect*` |
+| Dual Coraza (failover affinity) | **PASS** | `TestStockDualCorazaRoundRobinCorrelation` (c1+c2 UP, c2 backup) |
+| Phase-4 isolation 3.2 / 3.4 | **PASS (observed 200)** | `make it-phase4-only-all` |
+| Phase-4 response header enforce | **PASS** | `TestStockResponseBodyPhase4*` (evil via phase-3) |
+| Operator deploy validate | **PASS** | `docs/examples/deploy-operator-validate.sh` |
+| HTTP auth-outcomes | **PASS** | `make it-auth-http` |
 | Runnable shadow rollback | **PASS** | `docs/examples/shadow-rollback.sh` |
 
 ## Unresolved (honest)
 
 - Phase-4-only body deny without header on coraza-spoa 0.9.1
 - Active/active dual Coraza response inspect (backup-server lab shortcut)
-- HTTP admin auth-outcomes IT (no auth listener in default compose)

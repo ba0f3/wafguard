@@ -1,5 +1,5 @@
 #!/bin/sh
-# Live lab: shadow → enforce → rollback (compose on :18080)
+# Integration lab: shadow → enforce → rollback (compose on :18080)
 set -e
 cd "$(dirname "$0")/../.."
 make compose-up

@@ -2,7 +2,7 @@ HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-gate-sequence compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
+.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-auth-http it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-phase4-only-all it-gate-sequence compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -118,6 +118,12 @@ it-scanner:
 it-auth-redis:
 	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} go test -tags=integration ./internal/state -run '^TestAuthJoinRealRedis' -count=1
 
+it-auth-http:
+	docker compose -f integration/compose.yaml build wafguard
+	docker compose -f integration/compose.yaml up -d --force-recreate wafguard redis
+	sleep 3
+	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} WAF_AUTH_HTTP=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockHTTPAuthOutcomes' -count=1
+
 it-brute:
 	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} go test -tags=integration ./internal/state -run '^TestBruteForce' -count=1
 
@@ -134,11 +140,16 @@ it-coraza-res:
 COMPOSE_PHASE4 := -f integration/compose.yaml -f integration/compose.responseinspect.yaml -f integration/compose.phase4only.yaml
 
 it-phase4-only:
+	@echo "HAProxy series $(HAPROXY_SERIES)"
 	docker compose -f integration/compose.yaml build testorigin
-	docker compose $(COMPOSE_PHASE4) up -d --build --force-recreate coraza-spoa testorigin haproxy
+	docker compose $(COMPOSE_PHASE4) $(if $(filter 3.4,$(HAPROXY_SERIES)),-f integration/compose.haproxy34.yaml,) up -d --build --force-recreate coraza-spoa testorigin haproxy
 	sleep 5
 	WAF_PHASE4_ONLY=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockResponseBodyPhase4Only' -count=1 -v
 	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa testorigin haproxy
+
+it-phase4-only-all:
+	$(MAKE) it-phase4-only HAPROXY_SERIES=3.2
+	$(MAKE) it-phase4-only HAPROXY_SERIES=3.4
 
 it-coraza-res-34:
 	docker compose -f integration/compose.yaml -f integration/compose.haproxy34.yaml -f integration/compose.responseinspect.yaml up -d --force-recreate coraza-spoa testorigin haproxy

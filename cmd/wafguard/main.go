@@ -39,6 +39,8 @@ type fileConfig struct {
 	DefaultMode string `json:"default_mode"`
 	AdmissionTTLSeconds int    `json:"admission_ttl_seconds"`
 	AdminHTTPWrite      string   `json:"admin_http_write"`
+	AdminHTTPAuth       string   `json:"admin_http_auth"`
+	AdminHTTPAuthSource string   `json:"admin_http_auth_source"`
 	EnrichLogFile       string   `json:"enrich_log_file"`
 	EnrichApplication   string   `json:"enrich_application"`
 }
@@ -153,6 +155,15 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	if fc.AdminHTTPWrite != "" {
 		go func() {
 			_ = http.ListenAndServe(fc.AdminHTTPWrite, admin.New(store, admin.Access{Role: admin.Write}))
+		}()
+	}
+	if fc.AdminHTTPAuth != "" {
+		src := fc.AdminHTTPAuthSource
+		if src == "" {
+			src = "http-auth"
+		}
+		go func() {
+			_ = http.ListenAndServe(fc.AdminHTTPAuth, admin.New(store, admin.Access{Role: admin.Auth, SourceID: src}))
 		}()
 	}
 	if fc.EnrichLogFile != "" {

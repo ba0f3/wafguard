@@ -17,12 +17,12 @@ const (
 )
 
 type AuthReceipt struct {
-	Application string
-	RequestID   string
-	SourceID    string
-	AccountKey  string
-	ClientIP    netip.Addr `json:"client_ip,omitempty"`
-	Outcome     AuthOutcome
+	Application string      `json:"application,omitempty"`
+	RequestID   string      `json:"request_id"`
+	SourceID    string      `json:"source_id,omitempty"`
+	AccountKey  string      `json:"account_key,omitempty"`
+	ClientIP    netip.Addr  `json:"client_ip,omitempty"`
+	Outcome     AuthOutcome `json:"outcome"`
 }
 
 type Config struct {
