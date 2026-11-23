@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/spoa"
@@ -48,7 +47,6 @@ func (m *Metrics) BindHandler(h *spoa.Handler) *spoa.Handler {
 }
 
 type Health struct {
-	mu    sync.RWMutex
 	store func() error
 }
 

@@ -1,6 +1,6 @@
 module github.com/ba0f3/haproxy-waf-spoe
 
-go 1.26.0
+go 1.27.4
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0

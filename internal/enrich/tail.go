@@ -27,7 +27,7 @@ func readFromOffset(ctx context.Context, path string, offset int64, source Sourc
 	if err != nil {
 		return offset
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(offset, 0); err != nil {
 		return offset
 	}

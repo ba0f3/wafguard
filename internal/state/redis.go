@@ -395,8 +395,5 @@ func (s *Store) Inspect(ctx context.Context, app string, mode event.Mode, ip net
 }
 
 func (s *Store) List(ctx context.Context, app string, mode event.Mode, cursor string, limit int) (Page, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 100
-	}
 	return Page{Items: nil, NextCursor: ""}, nil
 }
