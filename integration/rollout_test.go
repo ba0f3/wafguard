@@ -26,7 +26,17 @@ func labClientIP(t *testing.T) string {
 	if v := os.Getenv("LAB_CLIENT_IP"); v != "" {
 		return v
 	}
-	out, err := exec.Command("docker", "network", "inspect", "integration_default", "-f", "{{(index .IPAM.Config 0).Gateway}}").Output()
+	network := "integration_default"
+	if name := os.Getenv("COMPOSE_PROJECT_NAME"); name != "" {
+		network = name + "_default"
+	}
+	out, err := exec.Command("docker", "network", "inspect", network, "-f", "{{(index .IPAM.Config 0).Gateway}}").Output()
+	if err == nil {
+		if ip := strings.TrimSpace(string(out)); ip != "" {
+			return ip
+		}
+	}
+	out, err = exec.Command("docker", "network", "inspect", "integration_default", "-f", "{{(index .IPAM.Config 0).Gateway}}").Output()
 	if err == nil {
 		if ip := strings.TrimSpace(string(out)); ip != "" {
 			return ip
@@ -96,9 +106,16 @@ func TestRolloutSharedState(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		corazaDeny(t, haproxyURL())
 	}
-	ban, err := c.Get(ctx, "wg:ban:sample_app:"+ip).Result()
-	if err != nil || ban == "" {
-		t.Fatalf("want ban key in redis, got %q %v", ban, err)
+	ban := ""
+	for i := 0; i < 20; i++ {
+		ban, _ = c.Get(ctx, "wg:ban:sample_app:"+ip).Result()
+		if ban != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if ban == "" {
+		t.Fatalf("want ban key in redis, got %q", ban)
 	}
 	resp, err := http.Get(haproxyBURL() + "/ok")
 	if err != nil {
@@ -112,6 +129,8 @@ func TestRolloutSharedState(t *testing.T) {
 
 func TestRolloutBackendSignals(t *testing.T) {
 	requireRollout(t)
+	c := redis.NewClient(&redis.Options{Addr: redisAddr()})
+	_ = c.Del(context.Background(), "wg:ban:sample_app:"+labClientIP(t))
 	resp, err := http.Get(haproxyURL() + "/status/503")
 	if err != nil {
 		t.Fatal(err)

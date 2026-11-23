@@ -186,6 +186,7 @@ func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, e
 		s.metaKey(app, ip),
 		s.modeKey(app),
 		s.supKey(app, ip),
+		s.fenceKey(app),
 	}
 	res, err := s.client.EvalSha(ctx, s.checkSHA, keys,
 		strconv.FormatInt(nowMS, 10),

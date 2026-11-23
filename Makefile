@@ -156,15 +156,20 @@ it-coraza-res-34:
 	sleep 5
 	WAF_CORAZA_RES=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockCorazaResponse|^TestStockResponseBody' -count=1
 
+GATE_COMPOSE_PROJECT ?= wafgate-seq
+
 it-gate-sequence:
-	$(MAKE) it-failover
-	docker compose -f integration/compose.yaml up -d --force-recreate redis wafguard haproxy coraza-spoa testorigin
-	sleep 4
-	$(MAKE) it-stock HAPROXY_SERIES=3.2
-	$(MAKE) it-stock HAPROXY_SERIES=3.4
-	docker compose $(COMPOSE_ROLLOUT) up -d --build wafguard wafguard2 haproxy haproxy-b
-	sleep 6
-	$(MAKE) it-rollout it-unban-race
+	docker compose -f integration/compose.yaml down -v || true
+	COMPOSE_PROJECT_NAME=wafgate-operator-val docker compose -f integration/compose.yaml -f deploy/compose.operator-example.yaml down -v || true
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) docker compose -f integration/compose.yaml down -v || true
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) $(MAKE) it-failover
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) docker compose -f integration/compose.yaml up -d --force-recreate redis wafguard haproxy coraza-spoa testorigin
+	bash scripts/wait-readyz.sh
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) $(MAKE) it-stock HAPROXY_SERIES=3.2
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) $(MAKE) it-stock HAPROXY_SERIES=3.4
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) docker compose $(COMPOSE_ROLLOUT) up -d --build --force-recreate wafguard wafguard2 haproxy haproxy-b coraza-spoa
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) COMPOSE_FILES="$(COMPOSE_ROLLOUT)" bash scripts/wait-rollout-ready.sh
+	COMPOSE_PROJECT_NAME=$(GATE_COMPOSE_PROJECT) $(MAKE) it-rollout it-unban-race
 
 compose-failover-up:
 	docker compose $(COMPOSE_FAILOVER) up -d --build wafguard haproxy redis-replica redis-sentinel
@@ -182,7 +187,7 @@ compose-recorder-up:
 	docker compose $(COMPOSE_RECORDER) up -d --build
 
 validate-operator-deploy:
-	bash docs/examples/deploy-operator-validate.sh
+	OPERATOR_COMPOSE_PROJECT=wafgate-operator-val bash docs/examples/deploy-operator-validate.sh
 
 compose-down:
 	docker compose -f $(COMPOSE_FILE) down -v

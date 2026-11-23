@@ -8,6 +8,7 @@ services:
       - "12345:12345"
       - "127.0.0.1:9090:9090"
       - "127.0.0.1:19201:19201"
+      - "127.0.0.1:19200:19200"
   coraza-spoa:
     volumes:
       - ${OPERATOR_CORAZA_CONFIG}:/config.yaml:ro

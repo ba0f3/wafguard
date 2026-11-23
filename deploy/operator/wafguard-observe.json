@@ -5,6 +5,7 @@
   "admin_http_auth": "0.0.0.0:19201",
   "admin_http_auth_source": "operator-login",
   "admin_http_auth_token": "operator-lab-only",
+  "admin_http_write": "0.0.0.0:19200",
   "default_mode": "observe",
   "admission_ttl_seconds": 120,
   "redis": { "addr": "redis:6379" },

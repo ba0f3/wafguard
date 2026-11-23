@@ -83,6 +83,24 @@ func TestModeRevisionFence(t *testing.T) {
 	}
 }
 
+func TestNewAdmissionAfterPolicyChangeCounts(t *testing.T) {
+	store, _ := testStore(t)
+	ctx := context.Background()
+	ip := netip.MustParseAddr("192.0.2.58")
+	_, err := store.SetPolicy(ctx, "sample_app", 0, policy.DefaultConfig(), event.ModeEnforce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	for i := 0; i < 3; i++ {
+		observeDeny(t, store, d, ip, fmt.Sprintf("950e8400-e29b-41d4-a716-4466554400%d", i))
+	}
+	dBan, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	if dBan.Action != event.ActionBan {
+		t.Fatalf("post-policy admissions must count toward ban, got %s", dBan.Action)
+	}
+}
+
 func TestUnbanClearsActiveBan(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()

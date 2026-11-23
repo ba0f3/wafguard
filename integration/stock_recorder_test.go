@@ -71,4 +71,3 @@ func TestStockRecorderCalls(t *testing.T) {
 		}
 	}
 }
-

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "spop_listen": "0.0.0.0:12345",
-  "metrics_listen": "127.0.0.1:9090",
+  "metrics_listen": "0.0.0.0:9090",
   "admin_http_write": "0.0.0.0:19200",
   "default_mode": "enforce",
   "admission_ttl_seconds": 120,
