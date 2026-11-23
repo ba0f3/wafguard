@@ -213,6 +213,9 @@ func (s *Store) authKey(app, requestID string) string     { return s.prefix("aut
 func (s *Store) bruteKey(app string, ip netip.Addr) string {
 	return s.prefix("brute", app, ip.String())
 }
+func (s *Store) scannerKey(app string, ip netip.Addr) string {
+	return s.prefix("scanner", app, ip.String())
+}
 func (s *Store) dedupeKey(eventID string) string { return s.prefix("dedupe", eventID) }
 func (s *Store) contribKey(app string, ip netip.Addr) string {
 	return s.prefix("contrib", app, ip.String())
@@ -309,7 +312,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		s.modeKey(app), s.fenceKey(app), s.authKey(app, ev.Request.RequestID),
 		s.bruteKey(app, ev.Request.ClientIP),
 		s.admissionKey(app, ev.Request.RequestID), s.policyRevKey(app),
-		s.supKey(app, ev.Request.ClientIP),
+		s.supKey(app, ev.Request.ClientIP), s.scannerKey(app, ev.Request.ClientIP),
 	}
 	originStatus, finalStatus := "", ""
 	if ev.OriginStatus != nil {
@@ -325,22 +328,40 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		admissionAt, cfg.BruteWindowSec, cfg.BruteFailures,
 		ev.Request.RequestID, app, ev.Request.ClientIP.String(),
 		originStatus, finalStatus, strconv.FormatUint(rev, 10),
+		cfg.ScannerWindowSec, cfg.ScannerResponses,
 	).Result()
 	if err != nil {
 		return err
 	}
 	if row, ok := res.([]interface{}); ok && len(row) > 0 {
-		reason := fmt.Sprint(row[0])
-		switch reason {
-		case "banned", "brute_banned":
-			log.Printf("ban issued app=%s request_id=%s client_ip=%s reason=%s", app, ev.Request.RequestID, ev.Request.ClientIP, reason)
-		case "shadow":
-			count := "-"
-			if len(row) > 1 {
-				count = fmt.Sprint(row[1])
+		status := fmt.Sprint(row[0])
+		banReason := ""
+		if len(row) > 1 {
+			banReason = fmt.Sprint(row[1])
+		}
+		for _, item := range row[2:] {
+			sig, ok := item.([]interface{})
+			if !ok || len(sig) < 3 {
+				continue
 			}
-			log.Printf("ban would fire app=%s request_id=%s client_ip=%s reason=waf_deny_threshold count=%s threshold=%d mode=observe",
-				app, ev.Request.RequestID, ev.Request.ClientIP, count, cfg.WAFDenyThreshold)
+			reason := fmt.Sprint(sig[0])
+			count := fmt.Sprint(sig[1])
+			threshold := fmt.Sprint(sig[2])
+			if reason == "backend_5xx" {
+				log.Printf("backend_5xx app=%s request_id=%s client_ip=%s status=%s",
+					app, ev.Request.RequestID, ev.Request.ClientIP, count)
+				continue
+			}
+			log.Printf("counter +1 app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
+				app, ev.Request.RequestID, ev.Request.ClientIP, reason, count, threshold)
+		}
+		switch status {
+		case "banned":
+			log.Printf("ban issued app=%s request_id=%s client_ip=%s reason=%s",
+				app, ev.Request.RequestID, ev.Request.ClientIP, banReason)
+		case "shadow":
+			log.Printf("ban would fire app=%s request_id=%s client_ip=%s reason=%s mode=observe",
+				app, ev.Request.RequestID, ev.Request.ClientIP, banReason)
 		}
 	}
 	return nil

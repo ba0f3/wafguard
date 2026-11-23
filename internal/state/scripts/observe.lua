@@ -1,75 +1,111 @@
 -- Atomic observe: dedupe by event id, verify the admission token and current
--- policy revision, then update bounded rolling windows. The auth hash is the
--- single place where an auth failure is joined to a WAF verdict.
+-- policy revision, then update bounded rolling windows. Every counter change
+-- is reported as a signal so the caller can log why an IP was flagged.
 -- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode,
 -- KEYS[6]=fence, KEYS[7]=auth hash, KEYS[8]=brute zset, KEYS[9]=admission token,
--- KEYS[10]=policy revision, KEYS[11]=suppression
+-- KEYS[10]=policy revision, KEYS[11]=suppression, KEYS[12]=scanner zset
 -- ARGV: event_id, now_ms, waf_deny, waf_window_sec, waf_threshold, ban_ttl_sec,
 -- default_mode, admission_gen, max_age_ms, admission_at_ms, brute_window_sec,
 -- brute_threshold, request_id, app, client_ip, origin_status, final_status,
--- admission_rev
-if redis.call('EXISTS', KEYS[1]) == 1 then
-  return {'deduped'}
-end
+-- admission_rev, scanner_window_sec, scanner_responses
 local now = tonumber(ARGV[2])
 local max_age = tonumber(ARGV[9])
 local app, ip, rid = ARGV[14], ARGV[15], ARGV[13]
+local ban_ttl = tonumber(ARGV[6])
+local brute_window = tonumber(ARGV[11])
+local brute_threshold = tonumber(ARGV[12])
+local scanner_window = tonumber(ARGV[19])
+local scanner_threshold = tonumber(ARGV[20])
+local mode = ARGV[7]
+local status = 'ok'
+local ban_reason = ''
+local signals = {}
+
+local function finish()
+  local out = {status, ban_reason}
+  for _, sig in ipairs(signals) do
+    table.insert(out, sig)
+  end
+  return out
+end
+local function early(s)
+  status = s
+  return finish()
+end
+local function emit(reason, count, threshold)
+  table.insert(signals, {reason, count, threshold})
+end
+-- rid is the zset member, so the same request counted by two different
+-- signals cannot increase the same counter twice.
+local function bump(key, window_sec, threshold, reason)
+  redis.call('ZADD', key, now, rid)
+  redis.call('ZREMRANGEBYSCORE', key, 0, now - (window_sec * 1000))
+  redis.call('PEXPIRE', key, window_sec * 1000)
+  local count = redis.call('ZCARD', key)
+  emit(reason, count, threshold)
+  return count
+end
+local function maybeBan(reason, count, threshold)
+  if count < threshold then return end
+  if mode == 'enforce' then
+    local exp = now + (ban_ttl * 1000)
+    redis.call('SET', KEYS[3], exp, 'PX', ban_ttl * 1000)
+    status = 'banned'
+    if ban_reason == '' then ban_reason = reason end
+  elseif status ~= 'banned' then
+    status = 'shadow'
+    if ban_reason == '' then ban_reason = reason end
+  end
+end
+
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return early('deduped')
+end
 local token_gen = redis.call('HGET', KEYS[9], 'gen')
 if not token_gen or redis.call('HGET', KEYS[9], 'app') ~= app or
    redis.call('HGET', KEYS[9], 'ip') ~= ip then
-  return {'fenced', 'admission'}
+  return early('fenced')
 end
 local admitted_at = tonumber(redis.call('HGET', KEYS[9], 'at_ms'))
 if (now - admitted_at) > max_age or admitted_at > now then
-  return {'fenced', 'age'}
+  return early('fenced')
 end
 local token_rev = redis.call('HGET', KEYS[9], 'rev') or '0'
 if ARGV[18] ~= '' and ARGV[18] ~= token_rev then
-  return {'fenced', 'revision_argument'}
+  return early('fenced')
 end
 if (redis.call('GET', KEYS[10]) or '0') ~= token_rev then
-  return {'fenced', 'revision'}
+  return early('fenced')
 end
 if ARGV[8] ~= '' and ARGV[8] ~= token_gen then
-  return {'fenced', 'generation'}
+  return early('fenced')
 end
 local fence = redis.call('GET', KEYS[6])
 if fence and fence ~= token_gen then
-  return {'fenced', 'generation'}
+  return early('fenced')
 end
 redis.call('SET', KEYS[1], '1', 'PX', max_age)
 local sup = redis.call('GET', KEYS[11])
 if sup and tonumber(sup) > now then
-  return {'suppressed'}
+  return early('suppressed')
 end
-local mode = redis.call('GET', KEYS[5]) or ARGV[7]
-local function brute_count()
-  if redis.call('HGET', KEYS[7], 'outcome') ~= 'failure' then return nil end
-  if redis.call('HSETNX', KEYS[7], 'brute_counted', '1') ~= 1 then return nil end
-  redis.call('ZADD', KEYS[8], now, rid)
-  local bwin = tonumber(ARGV[11])
-  redis.call('ZREMRANGEBYSCORE', KEYS[8], 0, now - (bwin * 1000))
-  redis.call('PEXPIRE', KEYS[8], bwin * 1000)
-  local count = redis.call('ZCARD', KEYS[8])
-  if count >= tonumber(ARGV[12]) and mode == 'enforce' then
-    local ban_ttl = tonumber(ARGV[6])
-    local exp = now + (ban_ttl * 1000)
-    redis.call('SET', KEYS[3], exp, 'PX', ban_ttl * 1000)
-    return {'brute_banned', count, exp}
-  end
-  return nil
-end
+mode = redis.call('GET', KEYS[5]) or ARGV[7]
+
+-- Auth failures are joined to the admission token; keep the joined marker for
+-- the existing receipt-order tests and count the failure only once.
 if redis.call('EXISTS', KEYS[7]) == 1 then
   local outcome = redis.call('HGET', KEYS[7], 'outcome')
   if outcome and redis.call('HSETNX', KEYS[7], 'joined', '1') == 1 then
     redis.call('HSET', KEYS[7], 'joined_at_ms', ARGV[2])
-    local br = brute_count()
-    if br then return br end
+    if outcome == 'failure' and redis.call('HSETNX', KEYS[7], 'brute_counted', '1') == 1 then
+      local count = bump(KEYS[8], brute_window, brute_threshold, 'brute_auth')
+      maybeBan('brute_auth', count, brute_threshold)
+    end
   end
 end
+
 -- Status observation is opt-in; only create (and then bound) the meta hash
--- when a status actually arrives. PEXPIRE before the HSET would be a no-op
--- for a fresh IP and leave a permanent key.
+-- when a status actually arrives.
 if ARGV[16] ~= '' then
   redis.call('HSET', KEYS[4], 'origin_status', ARGV[16], 'response_seen', '1')
   redis.call('PEXPIRE', KEYS[4], max_age)
@@ -78,20 +114,23 @@ if ARGV[17] ~= '' then
   redis.call('HSET', KEYS[4], 'final_client_status', ARGV[17])
   redis.call('PEXPIRE', KEYS[4], max_age)
 end
-if tonumber(ARGV[3]) == 1 then
-  redis.call('ZADD', KEYS[2], now, ARGV[1])
-  local window = tonumber(ARGV[4])
-  redis.call('ZREMRANGEBYSCORE', KEYS[2], 0, now - (window * 1000))
-  redis.call('PEXPIRE', KEYS[2], window * 1000)
-  local count = redis.call('ZCARD', KEYS[2])
-  local threshold = tonumber(ARGV[5])
-  if count >= threshold and mode == 'enforce' then
-    local ban_ttl = tonumber(ARGV[6])
-    local exp = now + (ban_ttl * 1000)
-    redis.call('SET', KEYS[3], exp, 'PX', ban_ttl * 1000)
-    return {'banned', count, exp}
-  elseif count >= threshold then
-    return {'shadow', count}
+
+local origin = tonumber(ARGV[16] or '')
+if origin then
+  if origin == 401 then
+    local count = bump(KEYS[8], brute_window, brute_threshold, 'brute_401')
+    maybeBan('brute_401', count, brute_threshold)
+  elseif origin == 404 then
+    local count = bump(KEYS[12], scanner_window, scanner_threshold, 'scanner_404')
+    maybeBan('scanner_404', count, scanner_threshold)
+  elseif origin >= 500 and origin <= 504 then
+    emit('backend_5xx', origin, 0)
   end
 end
-return {'ok'}
+
+if tonumber(ARGV[3]) == 1 then
+  local count = bump(KEYS[2], tonumber(ARGV[4]), tonumber(ARGV[5]), 'waf_deny')
+  maybeBan('waf_deny', count, tonumber(ARGV[5]))
+end
+
+return finish()

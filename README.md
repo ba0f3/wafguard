@@ -99,6 +99,16 @@ curl -fsS -X PUT http://127.0.0.1:19200/v1/apps/sample_app/policy \
 
 Use `"mode":"observe"` to roll back, and `POST /v1/apps/{app}/unban` to clear an accidental ban. Admin request bodies are limited to 64 KiB (larger ones return HTTP 413).
 
+### Understanding counter logs
+
+Every policy counter change is logged with its reason and threshold, for example
+`counter +1 app=sample_app request_id=... client_ip=... reason=waf_deny count=2 threshold=3`.
+Reasons: `waf_deny` (Coraza deny), `brute_auth` (failed auth receipt),
+`brute_401` (origin returned 401), `scanner_404` (origin returned 404). Origin
+500–504 produce `backend_5xx ... status=<code>` and **never** ban — they are a
+backend fault. Crossing a threshold logs `ban issued ... reason=<reason>` in
+enforce mode, or `ban would fire ...` in observe mode.
+
 ## Configure HAProxy
 
 The frontend lives in `deploy/haproxy/haproxy.cfg` and the SPOE engine in `deploy/haproxy/wafguard.cfg`. The essential wiring:

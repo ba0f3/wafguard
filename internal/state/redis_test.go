@@ -97,7 +97,7 @@ func TestObserveLogsBanReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"ban issued", "request_id=" + rid, "client_ip=192.0.2.9", "reason=banned"} {
+	for _, want := range []string{"ban issued", "request_id=" + rid, "client_ip=192.0.2.9", "reason=waf_deny"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ban log missing %q; got %q", want, out)
 		}
@@ -138,10 +138,68 @@ func TestObserveLogsShadowBanCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"ban would fire", "request_id=" + rid, "client_ip=192.0.2.7", "reason=waf_deny_threshold", "threshold=1"} {
+	for _, want := range []string{"ban would fire", "request_id=" + rid, "client_ip=192.0.2.7", "reason=waf_deny", "threshold=1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("shadow log missing %q; got %q", want, out)
 		}
+	}
+}
+
+func TestObserveLogsBackendStatusSignals(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "statuslog",
+		DefaultMode: event.ModeEnforce,
+		Apps: map[string]policy.Config{"sample_app": {
+			WAFDenyWindowSec: 30, WAFDenyThreshold: 3, WAFDenyBanSec: 900,
+			BruteWindowSec: 60, BruteFailures: 2, ScannerWindowSec: 60, ScannerResponses: 2,
+			MaxEventAgeSec: 120, AdmissionTTL: 120,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ip := netip.MustParseAddr("192.0.2.30")
+	feed := func(rid string, status int) {
+		t.Helper()
+		r := event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid}
+		admission, err := store.Check(ctx, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := status
+		ev := event.Event{
+			Request:    r,
+			ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
+			Kind:       event.KindWafVerdict,
+			Phase:      event.PhaseRequest,
+			Admission:  admission.Admission,
+			RequestWAF: event.Verdict{Action: "allow"},
+			OriginStatus: &st,
+		}
+		if err := store.Observe(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	feed("550e8400-e29b-41d4-a716-446655440071", 401)
+	feed("550e8400-e29b-41d4-a716-446655440072", 404)
+	feed("550e8400-e29b-41d4-a716-446655440073", 500)
+	out := buf.String()
+	for _, want := range []string{
+		"counter +1", "reason=brute_401", "reason=scanner_404", "backend_5xx", "status=500",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("backend signal log missing %q; got %q", want, out)
+		}
+	}
+	if strings.Contains(out, "ban issued") {
+		t.Fatalf("500 (and below-threshold 401/404) must not ban; got %q", out)
 	}
 }
 
