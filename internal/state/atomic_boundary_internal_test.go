@@ -21,7 +21,7 @@ const boundaryRID = "220e8400-e29b-41d4-a716-446655440001"
 func TestRecordAuthRejectsTokenAndRevisionMismatch(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := New(client, Config{
 		Namespace: "boundary", DefaultMode: event.ModeEnforce,
 		Apps:       map[string]policy.Config{"sample_app": policy.DefaultConfig()},
@@ -92,7 +92,7 @@ func TestRecordAuthRejectsTokenAndRevisionMismatch(t *testing.T) {
 func TestObserveRejectsTokenAndRevisionMismatch(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := New(client, Config{
 		Namespace: "boundaryobs", DefaultMode: event.ModeEnforce,
 		Apps: map[string]policy.Config{"sample_app": {WAFDenyWindowSec: 30, WAFDenyThreshold: 1,

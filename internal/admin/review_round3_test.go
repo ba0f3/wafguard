@@ -21,7 +21,7 @@ import (
 func TestAuthHTTPBoundToSingleApp(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := state.New(client, state.Config{
 		Namespace: "authscope", DefaultMode: event.ModeEnforce, AuthSource: "login-app",
 		Apps: map[string]policy.Config{"sample_app": policy.DefaultConfig(), "other_app": policy.DefaultConfig()},
@@ -45,7 +45,7 @@ func TestAuthHTTPBoundToSingleApp(t *testing.T) {
 	})
 	post := func(app, rid string) int {
 		t.Helper()
-		body := fmt.Sprintf(`{"request_id":"client-forged","outcome":"failure"}`)
+		body := `{"request_id":"client-forged","outcome":"failure"}`
 		req := httptest.NewRequest(http.MethodPost, "/v1/apps/"+app+"/auth-outcomes", strings.NewReader(body))
 		req.Header.Set(admin.RequestIDHeader, rid)
 		w := httptest.NewRecorder()

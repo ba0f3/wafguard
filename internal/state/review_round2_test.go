@@ -64,7 +64,7 @@ func TestObserveRollbackDoesNotEnforceActiveBan(t *testing.T) {
 func TestNewerPolicyLoadFailureFailsClosed(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := state.New(client, state.Config{
 		Namespace: "stalecfg", DefaultMode: event.ModeEnforce,
 		Apps:       map[string]policy.Config{"sample_app": policy.DefaultConfig()},

@@ -75,7 +75,7 @@ func TestRedisStalledEndpointIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -87,7 +87,7 @@ func TestRedisStalledEndpointIsBounded(t *testing.T) {
 		}
 	}()
 	client := newRedisClient(redisOptions{Addr: ln.Addr().String()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	opt := client.(*redis.Client).Options()
 	if opt.ContextTimeoutEnabled != true || opt.DialTimeout > time.Second ||
 		opt.ReadTimeout > time.Second || opt.WriteTimeout > time.Second ||

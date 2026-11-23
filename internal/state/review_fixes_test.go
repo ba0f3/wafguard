@@ -69,7 +69,7 @@ func TestScriptCacheFlushRecoveryAllFour(t *testing.T) {
 	store := newFixStore(t, mr, "fix3")
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	ip := netip.MustParseAddr("198.51.100.10")
 
 	d := admit(t, store, fixRid1, ip)
@@ -122,7 +122,7 @@ func TestDedupePTTLMilliseconds(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	key := "fix4:dedupe:" + event.EventID("sample_app", fixRid1, event.KindWafVerdict)
 	pttl, err := client.PTTL(context.Background(), key).Result()
 	if err != nil {
@@ -155,7 +155,7 @@ func TestIdleKeysBoundedAndStaleAdmissionFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	for _, suffix := range []string{
 		"meta:sample_app:" + ip.String(), "contrib:sample_app:" + ip.String(),
 		"brute:sample_app:" + ip.String(), "admission:sample_app:" + fixRid1,
@@ -373,7 +373,7 @@ func TestUnbanClearsBruteAndSuppressionStopsReban(t *testing.T) {
 func TestPartialOperatorPolicyNoFirstFailureBan(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := state.New(client, state.Config{
 		Namespace: "fix15", DefaultMode: event.ModeEnforce,
 		Apps: map[string]policy.Config{"sample_app": {
@@ -518,7 +518,7 @@ func mrGet(t *testing.T, mr *miniredis.Miniredis, key string) string {
 func zcard(t *testing.T, mr *miniredis.Miniredis, key string) int64 {
 	t.Helper()
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	n, err := c.ZCard(context.Background(), key).Result()
 	if err != nil {
 		t.Fatal(err)
@@ -529,7 +529,7 @@ func zcard(t *testing.T, mr *miniredis.Miniredis, key string) int64 {
 func hgetall(t *testing.T, mr *miniredis.Miniredis, key string) map[string]string {
 	t.Helper()
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	m, err := c.HGetAll(context.Background(), key).Result()
 	if err != nil {
 		t.Fatal(err)

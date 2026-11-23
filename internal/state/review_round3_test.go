@@ -18,7 +18,7 @@ import (
 func TestAuthSourceBoundToOneAdmittedApp(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := state.New(client, state.Config{
 		DefaultMode: event.ModeEnforce, AuthSource: "login-app",
 		Apps: map[string]policy.Config{"sample_app": policy.DefaultConfig(), "other_app": policy.DefaultConfig()},
@@ -60,7 +60,7 @@ func TestAuthSourceBoundToOneAdmittedApp(t *testing.T) {
 func TestUnbanFingerprintIncludesReason(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	store, err := state.New(client, state.Config{})
 	if err != nil {
 		t.Fatal(err)
