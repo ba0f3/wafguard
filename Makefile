@@ -205,9 +205,8 @@ validate-operator-deploy:
 	OPERATOR_COMPOSE_PROJECT=wafgate-operator-val bash docs/examples/deploy-operator-validate.sh
 
 # Standalone production-shaped operator topology: no published SPOE ports.
-validate-operator-compose:
-	docker compose -f deploy/compose.operator.yaml config
-	$(MAKE) validate-operator-deploy
+# The validation script supplies operator-owned fixture configs and tokens.
+validate-operator-compose: validate-operator-deploy
 
 compose-down:
 	docker compose -f $(COMPOSE_FILE) down -v

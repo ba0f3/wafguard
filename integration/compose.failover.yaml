@@ -3,7 +3,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--replicaof", "redis", "6379", "--appendonly", "yes"]
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     depends_on:
       redis:
         condition: service_healthy
@@ -16,7 +16,7 @@ services:
       redis-replica:
         condition: service_started
     ports:
-      - "26379:26379"
+      - "127.0.0.1:26379:26379"
     command:
       - sh
       - -c

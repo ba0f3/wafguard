@@ -112,6 +112,10 @@ func New(store *state.Store, access Access) http.Handler {
 				Reason:      body.Reason,
 			})
 			if err != nil {
+				if errors.Is(err, state.ErrOperationConflict) {
+					http.Error(w, err.Error(), http.StatusConflict)
+					return
+				}
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

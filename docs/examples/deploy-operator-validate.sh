@@ -16,13 +16,32 @@ ORIGIN="http://127.0.0.1:${OPERATOR_HAPROXY_PORT}"
 METRICS="http://127.0.0.1:${OPERATOR_METRICS_PORT:-29090}"
 AUTH="http://127.0.0.1:${OPERATOR_AUTH_PORT:-29201}"
 WRITE="http://127.0.0.1:${OPERATOR_WRITE_PORT:-29200}"
-AUTH_TOKEN="${OPERATOR_AUTH_TOKEN:-operator-lab-only}"
-WRITE_TOKEN="${OPERATOR_WRITE_TOKEN:-operator-lab-only}"
+AUTH_TOKEN="fixture-only-auth-token"
+WRITE_TOKEN="fixture-only-write-token"
 POLICY_CFG='{"waf_deny_window_sec":30,"waf_deny_threshold":3,"waf_deny_ban_sec":900,"brute_window_sec":60,"brute_failures":10,"max_event_age_sec":120,"admission_ttl":120}'
 
 TMP_FIX="$(mktemp -d)"
 TMP_MISSING="$(mktemp -d)"
 chmod 0755 "$TMP_FIX" "$TMP_MISSING"
+
+# Operator-owned secrets are required for normal startup. Validation injects
+# test-only tokens into a private copy; they never ship in the checked-in
+# operator configs.
+python3 - "$ROOT/deploy/operator/wafguard-isolated-observe.json" "$TMP_FIX/wafguard.json" "$AUTH_TOKEN" "$WRITE_TOKEN" <<'PYCFG'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+cfg["admin_http_auth_token"] = sys.argv[3]
+cfg["admin_http_auth_application"] = "sample_app"
+cfg["admin_http_write_token"] = sys.argv[4]
+json.dump(cfg, open(sys.argv[2], "w"), indent=2)
+PYCFG
+python3 - "$ROOT/deploy/operator/wafguard-isolated-replica.json" "$TMP_FIX/wafguard2.json" <<'PYCFG'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+json.dump(cfg, open(sys.argv[2], "w"), indent=2)
+PYCFG
+export OPERATOR_WAFGUARD_CONFIG="$TMP_FIX/wafguard.json"
+export OPERATOR_WAFGUARD_CONFIG2="$TMP_FIX/wafguard2.json"
 cleanup() {
 	$COMPOSE down -v >/dev/null 2>&1 || true
 	rm -rf "$TMP_FIX" "$TMP_MISSING"
@@ -88,6 +107,9 @@ echo '== isolated down'
 $COMPOSE down -v >/dev/null 2>&1 || true
 
 echo '== topology: rendered ports and network boundaries'
+if env -u OPERATOR_WAFGUARD_CONFIG -u OPERATOR_WAFGUARD_CONFIG2 docker compose -f deploy/compose.operator.yaml config >/dev/null 2>&1; then
+	echo 'operator-owned wafguard configs must be required'; exit 1
+fi
 if $COMPOSE config | grep -Eq 'published: "(12345|6379|6380|9000|9001)"'; then
 	echo 'SPOE/Redis ports must not be published'; exit 1
 fi
@@ -95,7 +117,7 @@ if $COMPOSE port wafguard 12345 >/dev/null 2>&1 || $COMPOSE port redis 6379 >/de
 	echo 'SPOE/Redis listeners are published'; exit 1
 fi
 grep -q '"spop_listen": "172.31.10.10:12345"' "$ROOT/deploy/operator/wafguard-isolated-observe.json" || { echo 'SPOE not bound to spoe address'; exit 1; }
-grep -q '"redis": { "addr": "172.31.20.5:6379" }' "$ROOT/deploy/operator/wafguard-isolated-observe.json" || { echo 'Redis address not private'; exit 1; }
+grep -q '"addr": "172.31.20.5:6379"' "$ROOT/deploy/operator/wafguard-isolated-observe.json" || { echo 'Redis address not private'; exit 1; }
 
 echo '== start'
 $COMPOSE up -d --build wafguard wafguard2 coraza-spoa coraza-spoa-b haproxy testorigin redis

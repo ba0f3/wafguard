@@ -4,8 +4,10 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -20,12 +22,17 @@ import (
 var scriptsFS embed.FS
 
 type Config struct {
-	Namespace    string
-	DefaultMode  event.Mode
-	Apps         map[string]policy.Config
-	AuthSource   string
-	AdmissionTTL time.Duration
+	Namespace       string
+	DefaultMode     event.Mode
+	Apps            map[string]policy.Config
+	AuthSource      string
+	AuthApplication string
+	AdmissionTTL    time.Duration
 }
+
+// ErrOperationConflict marks a retry of an unban operation id with a changed
+// payload; the HTTP admin API maps it to 409.
+var ErrOperationConflict = errors.New("operation id reused with a different payload")
 
 type Store struct {
 	client redis.UniversalClient
@@ -99,6 +106,29 @@ func New(client redis.UniversalClient, cfg Config) (*Store, error) {
 	}
 	if cfg.AuthSource == "" {
 		cfg.AuthSource = "login-app"
+	}
+	// The auth listener is bound to exactly one application. With several
+	// configured apps an explicit auth_application is expected in production;
+	// the defaults below stay fail-closed by binding to a single app and
+	// rejecting receipts for every other app.
+	if cfg.AuthApplication == "" {
+		if _, ok := cfg.Apps["sample_app"]; ok {
+			cfg.AuthApplication = "sample_app"
+		} else if len(cfg.Apps) == 1 {
+			for app := range cfg.Apps {
+				cfg.AuthApplication = app
+			}
+		} else {
+			apps := make([]string, 0, len(cfg.Apps))
+			for app := range cfg.Apps {
+				apps = append(apps, app)
+			}
+			sort.Strings(apps)
+			cfg.AuthApplication = apps[0]
+		}
+	}
+	if _, ok := cfg.Apps[cfg.AuthApplication]; !ok {
+		return nil, fmt.Errorf("auth application %q is not configured", cfg.AuthApplication)
 	}
 	s := &Store{
 		client:           client,
@@ -195,6 +225,9 @@ func (s *Store) policyConfigKey(app string) string { return s.prefix("policy", a
 func (s *Store) unbanOpKey(opID string) string     { return s.prefix("unban-op", opID) }
 
 func (s *Store) Healthy(ctx context.Context) error { return s.client.Ping(ctx).Err() }
+
+// AuthApplication is the single app this auth listener/source is bound to.
+func (s *Store) AuthApplication() string { return s.cfg.AuthApplication }
 
 func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, error) {
 	ip := req.ClientIP
@@ -300,6 +333,9 @@ func (s *Store) RecordAuth(ctx context.Context, receipt policy.AuthReceipt) erro
 	if receipt.SourceID != s.cfg.AuthSource {
 		return fmt.Errorf("auth source %q not trusted for app %q", receipt.SourceID, app)
 	}
+	if app != s.cfg.AuthApplication {
+		return fmt.Errorf("auth application %q not bound to this listener (bound to %q)", app, s.cfg.AuthApplication)
+	}
 	verdictID := event.EventID(app, receipt.RequestID, event.KindWafVerdict)
 	// The client IP comes from the admission token, never from the caller.
 	tokenKey := s.admissionKey(app, receipt.RequestID)
@@ -370,18 +406,21 @@ func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error
 	}
 	res, err := s.unbanScript.Run(ctx, s.client, keys,
 		opID, gen, time.Now().UnixMilli(), req.Suppression.Milliseconds(),
-		(24 * time.Hour).Milliseconds(), req.Application, req.ClientIP.String(),
+		(24 * time.Hour).Milliseconds(), req.Application, req.ClientIP.String(), req.Reason,
 	).Result()
 	if err != nil {
 		return UnbanResult{}, err
 	}
 	row, ok := res.([]interface{})
-	if !ok || len(row) < 2 {
+	if !ok || len(row) < 1 {
 		return UnbanResult{}, fmt.Errorf("bad unban result")
 	}
 	resultGen := fmt.Sprint(row[0])
 	if resultGen == "conflict" {
-		return UnbanResult{}, fmt.Errorf("operation id reused with a different payload")
+		return UnbanResult{}, ErrOperationConflict
+	}
+	if len(row) < 2 {
+		return UnbanResult{}, fmt.Errorf("bad unban result")
 	}
 	expMS, err := strconv.ParseInt(fmt.Sprint(row[1]), 10, 64)
 	if err != nil {

@@ -19,7 +19,7 @@ services:
       testorigin:
         condition: service_started
     ports:
-      - "19999:9999"
+      - "127.0.0.1:19999:9999"
     volumes:
       - ../deploy/haproxy/haproxy-recorder-matrix.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ../deploy/haproxy/coraza-dual.cfg:/usr/local/etc/haproxy/coraza.cfg:ro

@@ -4,15 +4,17 @@
   "metrics_listen": "172.31.30.10:9090",
   "admin_http_auth": "172.31.30.10:19201",
   "admin_http_auth_source": "operator-login",
-  "admin_http_auth_token": "operator-lab-only",
   "admin_http_write": "172.31.30.10:19200",
-  "admin_http_write_token": "operator-lab-only",
   "default_mode": "enforce",
   "admission_ttl_seconds": 120,
-  "redis": { "addr": "172.31.20.5:6379" },
+  "redis": {
+    "addr": "172.31.20.5:6379"
+  },
   "limits": {
     "max_inflight": 256,
-    "allowed_apps": ["sample_app"]
+    "allowed_apps": [
+      "sample_app"
+    ]
   },
   "apps": {
     "sample_app": {

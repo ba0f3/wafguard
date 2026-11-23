@@ -2,7 +2,7 @@
 
 ## Integration lab (Docker Compose fixtures)
 
-Synthetic origin (`integration/testorigin`), Coraza rules under `integration/fixtures/`, default **observe** in `deploy/wafguard.example.json`. Host ports: HAProxy **18080**, metrics **9090** (loopback), SPOA **12345**, auth receipts **19201** (loopback).
+Synthetic origin (`integration/testorigin`), Coraza rules under `integration/fixtures/`, default **observe** in `deploy/wafguard.example.json`. All host-published lab ports are loopback-only: HAProxy **18080**, metrics **9090**, SPOA **12345**, auth receipts **19201**, Redis **6379**, origin **8081**.
 
 ```sh
 make compose-config
@@ -19,12 +19,12 @@ Traffic: `http://127.0.0.1:18080/ok`, `/marker-deny` (Coraza 403). Readiness: `b
 | Boundary | Artifact |
 |----------|----------|
 | Standalone stack (Redis + 2 wafguard + 2 Coraza + HAProxy + lab origin) | `deploy/compose.operator.yaml` |
-| wafguard config (observe default) | `OPERATOR_WAFGUARD_CONFIG` → `deploy/operator/wafguard-isolated-observe.json` |
-| wafguard replica 2 config | `OPERATOR_WAFGUARD_CONFIG2` → `deploy/operator/wafguard-isolated-replica.json` |
+| wafguard config (operator-owned, required) | `OPERATOR_WAFGUARD_CONFIG` — supply your own JSON with `admin_http_*_token`; checked-in templates contain **no secrets** |
+| wafguard replica 2 config | `OPERATOR_WAFGUARD_CONFIG2` — operator-owned replica JSON |
 | Coraza SPOA rules | `OPERATOR_CORAZA_CONFIG` → `deploy/operator/coraza-spoa.yaml` |
 | HAProxy frontend/SPOE + origin | `OPERATOR_HAPROXY_DIR` → `deploy/operator/haproxy/` |
 
-Four bridges enforce the boundaries: `origin` (HAProxy + lab origin), `spoe` (internal: HAProxy + wafguard replicas + Coraza SPOA), `redis_net` (internal: wafguard replicas + Redis), and `admin` (wafguard only). The origin has no route to SPOE or Redis, Redis is unreachable from HAProxy/Coraza, and wafguard has no origin-network interface. SPOE is bound to `172.31.10.x` addresses, admin/metrics to `172.31.30.10` — never `0.0.0.0` — so network membership *and* listener addresses restrict access. Only lab-facing ports are published on loopback: HAProxy `28080`, metrics `29090`, auth intake `29201`, admin write `29200`. Override with `OPERATOR_*_PORT` if taken. Auth and admin write listeners require `admin_http_auth_token` / `admin_http_write_token`; startup fails without them.
+Four bridges enforce the boundaries: `origin` (HAProxy + lab origin), `spoe` (internal: HAProxy + wafguard replicas + Coraza SPOA), `redis_net` (internal: wafguard replicas + Redis), and `admin` (wafguard only). The origin has no route to SPOE or Redis, Redis is unreachable from HAProxy/Coraza, and wafguard has no origin-network interface. SPOE is bound to `172.31.10.x` addresses, admin/metrics to `172.31.30.10` — never `0.0.0.0` — so network membership *and* listener addresses restrict access. Only lab-facing ports are published on loopback: HAProxy `28080`, metrics `29090`, auth intake `29201`, admin write `29200`. Override with `OPERATOR_*_PORT` if taken. Auth and admin write listeners require `admin_http_auth_token` / `admin_http_write_token`; startup fails without them. The standalone stack has **no default config**: both `OPERATOR_WAFGUARD_CONFIG` and `OPERATOR_WAFGUARD_CONFIG2` must be supplied. Bind each auth listener to one app with `admin_http_auth_application`; receipts for other admitted apps are rejected. The validation script injects test-only tokens into private copies of `deploy/operator/wafguard-isolated-*.json`.
 
 ### HAProxy origin backend
 
@@ -47,12 +47,14 @@ Edit **`$OPERATOR_HAPROXY_DIR/haproxy.cfg`** `backend origin`:
 ```sh
 cd "$(git rev-parse --show-toplevel)"
 export COMPOSE_PROJECT_NAME=wafgate-operator
+export OPERATOR_WAFGUARD_CONFIG=/path/to/operator-owned-wafguard.json
+export OPERATOR_WAFGUARD_CONFIG2=/path/to/operator-owned-replica.json
 docker compose -f deploy/compose.operator.yaml up -d --build
 bash scripts/wait-readyz.sh http://127.0.0.1:29090/readyz
 make validate-operator-deploy
 ```
 
-`make validate-operator-deploy` creates a unique fixture config directory (no shared /tmp paths), asserts rendered ports and per-container network membership plus listener reachability, then runs: unauthenticated-write denial, authenticated policy update, admission-bound auth intake (retried with a fresh token if fenced), observe → enforce → mode-only rollback without deleting bans → idempotent unban with required operation id, second replica convergence, delayed benign request body hitting a stock phase-2 rule (403) with a paired benign body (200), opt-in response-status observation, clean protected response (200), and a missing-transaction overlay (500, `waf-block: response-error`, no upstream body). Run it on both supported releases:
+`make validate-operator-deploy` creates unique fixture directories (no shared /tmp paths), injects test-only admin/auth tokens into operator config copies, asserts rendered ports and per-container network membership plus listener reachability, then runs: unauthenticated-write denial, authenticated policy update, admission-bound auth intake (retried with a fresh token if fenced), observe → enforce → mode-only rollback without deleting bans → idempotent unban with required operation id, second replica convergence, delayed benign request body hitting a stock phase-2 rule (403) with a paired benign body (200), opt-in response-status observation, clean protected response (200), and a missing-transaction overlay (500, `waf-block: response-error`, no upstream body). Run it on both supported releases:
 
 ```sh
 OPERATOR_HAPROXY_IMAGE=haproxy:3.2.0 make validate-operator-deploy

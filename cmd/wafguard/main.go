@@ -29,23 +29,24 @@ import (
 )
 
 type fileConfig struct {
-	Version             int                      `json:"version"`
-	SPOPListen          string                   `json:"spop_listen"`
-	AdminRead           string                   `json:"admin_read_socket"`
-	AdminWrite          string                   `json:"admin_write_socket"`
-	Metrics             string                   `json:"metrics_listen"`
-	Redis               redisOptions             `json:"redis"`
-	Limits              limitsConfig             `json:"limits"`
-	Apps                map[string]policy.Config `json:"apps"`
-	DefaultMode         string                   `json:"default_mode"`
-	AdmissionTTLSeconds int                      `json:"admission_ttl_seconds"`
-	AdminHTTPWrite      string                   `json:"admin_http_write"`
-	AdminHTTPWriteToken string                   `json:"admin_http_write_token"`
-	AdminHTTPAuth       string                   `json:"admin_http_auth"`
-	AdminHTTPAuthSource string                   `json:"admin_http_auth_source"`
-	AdminHTTPAuthToken  string                   `json:"admin_http_auth_token"`
-	EnrichLogFile       string                   `json:"enrich_log_file"`
-	EnrichApplication   string                   `json:"enrich_application"`
+	Version                  int                      `json:"version"`
+	SPOPListen               string                   `json:"spop_listen"`
+	AdminRead                string                   `json:"admin_read_socket"`
+	AdminWrite               string                   `json:"admin_write_socket"`
+	Metrics                  string                   `json:"metrics_listen"`
+	Redis                    redisOptions             `json:"redis"`
+	Limits                   limitsConfig             `json:"limits"`
+	Apps                     map[string]policy.Config `json:"apps"`
+	DefaultMode              string                   `json:"default_mode"`
+	AdmissionTTLSeconds      int                      `json:"admission_ttl_seconds"`
+	AdminHTTPWrite           string                   `json:"admin_http_write"`
+	AdminHTTPWriteToken      string                   `json:"admin_http_write_token"`
+	AdminHTTPAuth            string                   `json:"admin_http_auth"`
+	AdminHTTPAuthSource      string                   `json:"admin_http_auth_source"`
+	AdminHTTPAuthApplication string                   `json:"admin_http_auth_application"`
+	AdminHTTPAuthToken       string                   `json:"admin_http_auth_token"`
+	EnrichLogFile            string                   `json:"enrich_log_file"`
+	EnrichApplication        string                   `json:"enrich_application"`
 }
 
 type redisOptions struct {
@@ -143,11 +144,12 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 		mode = event.ModeEnforce
 	}
 	store, err := state.New(client, state.Config{
-		Namespace:    "wg",
-		DefaultMode:  mode,
-		Apps:         fc.Apps,
-		AuthSource:   authSource,
-		AdmissionTTL: time.Duration(fc.AdmissionTTLSeconds) * time.Second,
+		Namespace:       "wg",
+		DefaultMode:     mode,
+		Apps:            fc.Apps,
+		AuthSource:      authSource,
+		AuthApplication: fc.AdminHTTPAuthApplication,
+		AdmissionTTL:    time.Duration(fc.AdmissionTTLSeconds) * time.Second,
 	})
 	if err != nil {
 		return err
@@ -195,7 +197,9 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 		}()
 	}
 	if fc.AdminHTTPAuth != "" {
-		authH := admin.New(store, admin.Access{Role: admin.Auth, SourceID: authSource})
+		authH := admin.New(store, admin.Access{
+			Role: admin.Auth, SourceID: authSource, Application: store.AuthApplication(),
+		})
 		go func() {
 			_ = http.ListenAndServe(fc.AdminHTTPAuth, withAuthToken(fc.AdminHTTPAuthToken, authH))
 		}()

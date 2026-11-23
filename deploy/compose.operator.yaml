@@ -29,7 +29,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ${OPERATOR_WAFGUARD_CONFIG:-../deploy/operator/wafguard-isolated-observe.json}:/etc/wafguard/config.json:ro
+      - ${OPERATOR_WAFGUARD_CONFIG:?OPERATOR_WAFGUARD_CONFIG must point to an operator-owned config containing admin/auth tokens}:/etc/wafguard/config.json:ro
     environment:
       - WG_CONFIG=/etc/wafguard/config.json
     networks:
@@ -52,7 +52,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ${OPERATOR_WAFGUARD_CONFIG2:-../deploy/operator/wafguard-isolated-replica.json}:/etc/wafguard/config.json:ro
+      - ${OPERATOR_WAFGUARD_CONFIG2:?OPERATOR_WAFGUARD_CONFIG2 must point to an operator-owned replica config}:/etc/wafguard/config.json:ro
     environment:
       - WG_CONFIG=/etc/wafguard/config.json
     networks:

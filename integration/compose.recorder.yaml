@@ -6,8 +6,8 @@ services:
       context: ..
       dockerfile: integration/images/recorder.Dockerfile
     ports:
-      - "12346:12346"
-      - "18090:18090"
+      - "127.0.0.1:12346:12346"
+      - "127.0.0.1:18090:18090"
   haproxy:
     depends_on: !reset
       recorder:
