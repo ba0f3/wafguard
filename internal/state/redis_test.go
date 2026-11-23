@@ -104,6 +104,47 @@ func TestObserveLogsBanReason(t *testing.T) {
 	}
 }
 
+func TestObserveLogsShadowBanCandidate(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "shadowlog",
+		DefaultMode: event.ModeObserve,
+		Apps:        map[string]policy.Config{"sample_app": {WAFDenyWindowSec: 30, WAFDenyThreshold: 1, WAFDenyBanSec: 900}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	rid := "550e8400-e29b-41d4-a716-446655440098"
+	req := event.Request{Application: "sample_app", ClientIP: netip.MustParseAddr("192.0.2.7"), RequestID: rid}
+	admission, err := store.Check(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := event.Event{
+		Request:    req,
+		ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
+		Kind:       event.KindWafVerdict,
+		Phase:      event.PhaseRequest,
+		Admission:  admission.Admission,
+		RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	if err := store.Observe(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"ban would fire", "request_id=" + rid, "client_ip=192.0.2.7", "reason=waf_deny_threshold", "threshold=1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("shadow log missing %q; got %q", want, out)
+		}
+	}
+}
+
 func TestSharedBan(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()

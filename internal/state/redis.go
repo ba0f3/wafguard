@@ -331,8 +331,16 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 	}
 	if row, ok := res.([]interface{}); ok && len(row) > 0 {
 		reason := fmt.Sprint(row[0])
-		if reason == "banned" || reason == "brute_banned" {
+		switch reason {
+		case "banned", "brute_banned":
 			log.Printf("ban issued app=%s request_id=%s client_ip=%s reason=%s", app, ev.Request.RequestID, ev.Request.ClientIP, reason)
+		case "shadow":
+			count := "-"
+			if len(row) > 1 {
+				count = fmt.Sprint(row[1])
+			}
+			log.Printf("ban would fire app=%s request_id=%s client_ip=%s reason=waf_deny_threshold count=%s threshold=%d mode=observe",
+				app, ev.Request.RequestID, ev.Request.ClientIP, count, cfg.WAFDenyThreshold)
 		}
 	}
 	return nil
