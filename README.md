@@ -70,6 +70,9 @@ Configuration is one JSON document — start from `deploy/wafguard.example.json`
 | `spop_listen` | SPOE address HAProxy connects to, e.g. `0.0.0.0:12345`. |
 | `metrics_listen` | Prometheus metrics and `/readyz`, e.g. `0.0.0.0:9090`. |
 | `redis.addr` | Redis primary. Alternative: `redis.sentinel` with `master_name` and `addrs`. |
+| `redis.db` | Optional Redis database index (default `0`). Applies to both standalone and failover clients. |
+| `redis.username` / `redis.password` | Optional ACL credentials for the Redis primary (also used for the master in failover). Plaintext in the mounted JSON — keep that file private. |
+| `redis.sentinel.username` / `redis.sentinel.password` | Optional ACL credentials used only when connecting to Sentinel nodes. |
 | `default_mode` | `observe` (shadow, default) or `enforce`; seeds Redis only on first boot. |
 | `admission_ttl_seconds` | Optional; if set, must be >= 30. |
 | `limits.max_inflight` | Cap on concurrent SPOE requests. |
@@ -79,6 +82,10 @@ Configuration is one JSON document — start from `deploy/wafguard.example.json`
 | `admin_http_auth` | Auth-outcome ingress; optional `admin_http_auth_source` (default `http-auth`) and `admin_http_auth_token` (header `X-Wafguard-Auth-Token`). |
 | `admin_read_socket`, `admin_write_socket` | Unix-socket admin listeners (read-only / write). |
 | `enrich_log_file`, `enrich_application` | Optional tailing of Coraza JSON logs for enrichment. |
+
+For a password-protected Redis or Sentinel, see
+[docs/examples/redis-sentinel-acl.md](docs/examples/redis-sentinel-acl.md) for
+ACL user creation and a full config example.
 
 The application name HAProxy sends (`txn.wafguard.app`) must appear in both `limits.allowed_apps` and `apps`. Runtime mode lives in Redis, so change it through the admin API rather than recreating the container:
 

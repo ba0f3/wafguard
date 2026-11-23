@@ -52,12 +52,17 @@ type fileConfig struct {
 
 type redisOptions struct {
 	Addr     string           `json:"addr"`
+	Username string           `json:"username,omitempty"`
+	Password string           `json:"password,omitempty"`
+	DB       int              `json:"db,omitempty"`
 	Sentinel *sentinelOptions `json:"sentinel,omitempty"`
 }
 
 type sentinelOptions struct {
 	MasterName string   `json:"master_name"`
 	Addrs      []string `json:"addrs"`
+	Username   string   `json:"username,omitempty"`
+	Password   string   `json:"password,omitempty"`
 }
 
 type limitsConfig struct {
@@ -115,22 +120,38 @@ const (
 	redisRetryMaxBackoff = 40 * time.Millisecond
 )
 
-func newRedisClient(ro redisOptions) redis.UniversalClient {
-	if ro.Sentinel != nil && ro.Sentinel.MasterName != "" && len(ro.Sentinel.Addrs) > 0 {
-		return redis.NewFailoverClient(&redis.FailoverOptions{
-			MasterName: ro.Sentinel.MasterName, SentinelAddrs: ro.Sentinel.Addrs,
-			DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
-			WriteTimeout: redisIOTimeout, PoolTimeout: redisPoolTimeout,
-			MaxRetries: redisMaxRetries, MinRetryBackoff: redisRetryMinBackoff,
-			MaxRetryBackoff: redisRetryMaxBackoff, ContextTimeoutEnabled: true,
-		})
-	}
-	return redis.NewClient(&redis.Options{
-		Addr: ro.Addr, DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
+func newRedisOptions(ro redisOptions) *redis.Options {
+	return &redis.Options{
+		Addr: ro.Addr, Username: ro.Username, Password: ro.Password, DB: ro.DB,
+		DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
 		WriteTimeout: redisIOTimeout, PoolTimeout: redisPoolTimeout,
 		MaxRetries: redisMaxRetries, MinRetryBackoff: redisRetryMinBackoff,
 		MaxRetryBackoff: redisRetryMaxBackoff, ContextTimeoutEnabled: true,
-	})
+	}
+}
+
+func newFailoverOptions(ro redisOptions) *redis.FailoverOptions {
+	opt := &redis.FailoverOptions{
+		Username: ro.Username, Password: ro.Password, DB: ro.DB,
+		DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
+		WriteTimeout: redisIOTimeout, PoolTimeout: redisPoolTimeout,
+		MaxRetries: redisMaxRetries, MinRetryBackoff: redisRetryMinBackoff,
+		MaxRetryBackoff: redisRetryMaxBackoff, ContextTimeoutEnabled: true,
+	}
+	if ro.Sentinel != nil {
+		opt.MasterName = ro.Sentinel.MasterName
+		opt.SentinelAddrs = ro.Sentinel.Addrs
+		opt.SentinelUsername = ro.Sentinel.Username
+		opt.SentinelPassword = ro.Sentinel.Password
+	}
+	return opt
+}
+
+func newRedisClient(ro redisOptions) redis.UniversalClient {
+	if ro.Sentinel != nil && ro.Sentinel.MasterName != "" && len(ro.Sentinel.Addrs) > 0 {
+		return redis.NewFailoverClient(newFailoverOptions(ro))
+	}
+	return redis.NewClient(newRedisOptions(ro))
 }
 
 func run(ctx context.Context, cfg runtimeConfig) error {

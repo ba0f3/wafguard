@@ -152,6 +152,7 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		}
 		if err := h.Backend.Observe(opCtx, ev); err != nil {
 			result = "observe_error"
+			why = err.Error()
 			_ = writeObserveACK(w, true)
 			return
 		}

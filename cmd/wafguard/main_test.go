@@ -15,6 +15,40 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func TestRedisAuthOptions(t *testing.T) {
+	opt := newRedisOptions(redisOptions{Addr: "redis:6379", Username: "wg", Password: "master-secret", DB: 3})
+	if opt.Username != "wg" || opt.Password != "master-secret" {
+		t.Fatalf("master credentials not applied: user=%q pass=%q", opt.Username, opt.Password)
+	}
+	if opt.DB != 3 {
+		t.Fatalf("standalone DB = %d, want 3", opt.DB)
+	}
+	if opt.DialTimeout == 0 {
+		t.Fatal("existing timeouts were dropped")
+	}
+}
+
+func TestFailoverAuthOptions(t *testing.T) {
+	opt := newFailoverOptions(redisOptions{
+		Username: "wg", Password: "master-secret", DB: 4,
+		Sentinel: &sentinelOptions{
+			MasterName: "mymaster",
+			Addrs:      []string{"sentinel:26379"},
+			Username:   "sentinel-user",
+			Password:   "sentinel-secret",
+		},
+	})
+	if opt.Username != "wg" || opt.Password != "master-secret" {
+		t.Fatalf("master credentials not applied on failover: user=%q pass=%q", opt.Username, opt.Password)
+	}
+	if opt.SentinelUsername != "sentinel-user" || opt.SentinelPassword != "sentinel-secret" {
+		t.Fatalf("sentinel credentials not applied: user=%q pass=%q", opt.SentinelUsername, opt.SentinelPassword)
+	}
+	if opt.DB != 4 {
+		t.Fatalf("failover DB = %d, want 4", opt.DB)
+	}
+}
+
 func TestRunLogsStartupListenersAndRedis(t *testing.T) {
 	mr := miniredis.RunT(t)
 	cfg, err := loadConfig(strings.NewReader(`{"version":1,"spop_listen":"127.0.0.1:0","metrics_listen":"127.0.0.1:0","redis":{"addr":"` + mr.Addr() + `"},"limits":{"allowed_apps":["sample_app"]}}`))

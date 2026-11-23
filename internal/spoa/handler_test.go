@@ -3,6 +3,7 @@ package spoa
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"net/netip"
 	"strings"
@@ -43,6 +44,7 @@ type fakeBackend struct {
 	observeCalls int
 	checkAction  event.Action
 	checkSlow    time.Duration
+	observeErr   error
 }
 
 func (f *fakeBackend) Check(ctx context.Context, req event.Request) (event.Decision, error) {
@@ -74,7 +76,38 @@ func (f *fakeBackend) Observe(ctx context.Context, ev event.Event) error {
 	f.mu.Lock()
 	f.observeCalls++
 	f.mu.Unlock()
-	return nil
+	return f.observeErr
+}
+
+func TestHandleSPOELogsObserveErrorDetail(t *testing.T) {
+	h := NewHandler(&fakeBackend{observeErr: errors.New("policy config missing for revision 3")}, event.Limits{
+		AllowedApps:    map[string]struct{}{"sample_app": {}},
+		MaxPathLen:     1024,
+		MaxRuleIDs:     64,
+		MaxCategoryLen: 64,
+	})
+	m := mustMessage(t, "waf-verdict", map[string]string{
+		"schema_version":       "1",
+		"request_id":           "550e8400-e29b-41d4-a716-446655440000",
+		"app":                  "sample_app",
+		"method":               "GET",
+		"client_ip":            "192.0.2.8",
+		"admission_generation": "g1",
+		"admission_at_ms":      "1700000000000",
+		"behavior_mode":        "enforce",
+		"path":                 "/ok",
+	}, func(w *encoding.KVWriter) error { return w.SetAddr("peer_ip", netip.MustParseAddr("32.0.2.32")) })
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	h.HandleSPOE(context.Background(), &encoding.ActionWriter{}, m)
+	out := buf.String()
+	for _, want := range []string{"result=observe_error", "reason=policy config missing for revision 3"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("observe error log missing %q; got %q", want, out)
+		}
+	}
 }
 
 func TestMissingAdmission(t *testing.T) {

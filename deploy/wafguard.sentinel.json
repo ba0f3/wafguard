@@ -5,9 +5,13 @@
   "default_mode": "enforce",
   "admission_ttl_seconds": 120,
   "redis": {
+    "username": "",
+    "password": "",
     "sentinel": {
       "master_name": "mymaster",
-      "addrs": ["redis-sentinel:26379"]
+      "addrs": ["redis-sentinel:26379"],
+      "username": "",
+      "password": ""
     }
   },
   "limits": {
