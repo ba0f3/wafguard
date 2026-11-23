@@ -1,0 +1,46 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  wafguard:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../deploy/wafguard.example.json:/etc/wafguard/config.json:ro
+    environment:
+      - WG_CONFIG=/etc/wafguard/config.json
+
+    ports:
+      - "12345:12345"
+      - "9090:9090"
+
+  testorigin:
+    build:
+      context: ..
+      dockerfile: integration/images/testorigin.Dockerfile
+    ports: ["8081:8081"]
+
+  coraza-spoa:
+    image: ghcr.io/corazawaf/coraza-spoa:0.9.1
+    volumes:
+      - ./fixtures/coraza-spoa.yaml:/etc/coraza-spoa/config.yaml:ro
+    ports: ["9000:9000"]
+
+  haproxy:
+    image: haproxy:3.2.0
+    depends_on: [wafguard, coraza-spoa, testorigin]
+    volumes:
+      - ../deploy/haproxy:/usr/local/etc/haproxy:ro
+    ports: ["18080:8080", "18443:8443"]
+

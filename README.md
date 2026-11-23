@@ -1,19 +1,27 @@
-# haproxy-waf-spoe
+# haproxy-waf-spoe (wafguard)
 
-Dịch vụ Go SPOA cho HAProxy, kết hợp verdict từ **Coraza SPOA upstream nguyên bản** với HTTP response và hành vi nhiều request để phát hiện scanner, brute force, burst và quản lý ban có thời hạn trên toàn cụm.
+Go SPOA for HAProxy: combines **upstream Coraza SPOA v0.9.1** verdicts with cross-request behavioral policy in Redis.
 
-## Trạng thái
+## Quick start (lab)
 
-Repository đang ở giai đoạn specification; chưa có service implementation hoặc binary production. Coraza baseline: official `corazawaf/coraza-spoa` v0.9.1, commit `c9b34f409e04cfb60219602bd1ad711afd15eaa3`.
+```sh
+make compose-config
+make compose-up
+export WAF_INTEGRATION=1
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/ok
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/marker-deny
+make it-stock HAPROXY_SERIES=3.2
+```
 
-## Tài liệu
+See [docs/runbooks/rollout.md](docs/runbooks/rollout.md) for shadow/enforce and rollback.
 
-- [Thiết kế v2: Coraza upstream nguyên bản](docs/specs/2026-11-23-haproxy-waf-spoe-design.md) — contract SPOE, thứ tự event, Redis, policies, vận hành và acceptance gates.
+## Build & test
 
-## Định hướng
+```sh
+go build -o bin/wafguard ./cmd/wafguard
+make test
+make race
+```
 
-- Coraza kiểm tra payload; service này kết hợp verdict với hành vi và quản lý ban.
-- Không sửa hoặc duy trì fork Coraza; core không phụ thuộc log enrichment.
-- P0 kiểm tra shared Redis trước mỗi HTTP request, không local cache.
-- Không tự ban chỉ vì 5xx; rollout bắt đầu bằng observe mode.
-- Toàn bộ behavioral core, adapters và admin API được phát triển trong repository này.
+Design: [docs/specs/2026-11-23-haproxy-waf-spoe-design.md](docs/specs/2026-11-23-haproxy-waf-spoe-design.md)
+
