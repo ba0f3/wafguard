@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +11,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestRunLogsStartupListenersAndRedis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	cfg, err := loadConfig(strings.NewReader(`{"version":1,"spop_listen":"127.0.0.1:0","metrics_listen":"127.0.0.1:0","redis":{"addr":"` + mr.Addr() + `"},"limits":{"allowed_apps":["sample_app"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := run(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"wafguard starting", "redis", "spoe listening", "metrics listening"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("startup log missing %q; got:\n%s", want, out)
+		}
+	}
+}
 
 func TestSentinelConfigValidation(t *testing.T) {
 	_, err := loadConfig(strings.NewReader(`{"version":1,"spop_listen":":0","redis":{"sentinel":{"addrs":["127.0.0.1:26379"]}}}`))

@@ -1,8 +1,11 @@
 package spoa
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +13,29 @@ import (
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 )
+
+func TestHandleSPOELogsRequest(t *testing.T) {
+	h := NewHandler(&fakeBackend{}, event.Limits{AllowedApps: map[string]struct{}{"sample_app": {}}})
+	m := mustMessage(t, "check-ban", map[string]string{
+		"schema_version": "1",
+		"request_id":     "550e8400-e29b-41d4-a716-446655440000",
+		"app":            "sample_app",
+		"client_ip":      "192.0.2.8",
+		"peer_ip":        "192.0.2.1",
+		"path":           "/ok",
+	})
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	h.HandleSPOE(context.Background(), &encoding.ActionWriter{}, m)
+	out := buf.String()
+	for _, want := range []string{"spoe", "check-ban", "result=ok"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("request log missing %q; got %q", want, out)
+		}
+	}
+}
 
 type fakeBackend struct {
 	mu           sync.Mutex

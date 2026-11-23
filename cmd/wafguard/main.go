@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -138,10 +139,23 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	if authSource == "" {
 		authSource = "login-app"
 	}
-	client := newRedisClient(fc.Redis)
+	redisTarget := fc.Redis.Addr
+	if fc.Redis.Sentinel != nil && len(fc.Redis.Sentinel.Addrs) > 0 {
+		redisTarget = fc.Redis.Sentinel.MasterName + "@" + strings.Join(fc.Redis.Sentinel.Addrs, ",")
+	}
 	mode := event.ModeObserve
 	if fc.DefaultMode == "enforce" {
 		mode = event.ModeEnforce
+	}
+	log.Printf("wafguard starting mode=%s redis=%s spop=%s metrics=%s", mode, redisTarget, fc.SPOPListen, fc.Metrics)
+	client := newRedisClient(fc.Redis)
+	pctx, pcancel := context.WithTimeout(context.Background(), redisIOTimeout)
+	pingErr := client.Ping(pctx).Err()
+	pcancel()
+	if pingErr != nil {
+		log.Printf("redis ping failed target=%s err=%v (continuing; requests will degrade)", redisTarget, pingErr)
+	} else {
+		log.Printf("redis ok target=%s", redisTarget)
 	}
 	store, err := state.New(client, state.Config{
 		Namespace:       "wg",
@@ -177,26 +191,32 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	if err != nil {
 		return err
 	}
+	log.Printf("spoe listening addr=%s", l.Addr())
 	go func() { _ = agent.Serve(l) }()
 
 	if fc.Metrics != "" {
+		log.Printf("metrics listening addr=%s readyz=%s/readyz", fc.Metrics, fc.Metrics)
 		go func() {
 			_ = http.ListenAndServe(fc.Metrics, health.Handler(reg))
 		}()
 	}
 	if fc.AdminWrite != "" {
+		log.Printf("admin listening addr=%s kind=unix-write", fc.AdminWrite)
 		go serveUnix(fc.AdminWrite, admin.New(store, admin.Access{Role: admin.Write}))
 	}
 	if fc.AdminRead != "" {
+		log.Printf("admin listening addr=%s kind=unix-read", fc.AdminRead)
 		go serveUnix(fc.AdminRead, admin.New(store, admin.Access{Role: admin.Read}))
 	}
 	if fc.AdminHTTPWrite != "" {
+		log.Printf("admin listening addr=%s kind=http-write", fc.AdminHTTPWrite)
 		writeH := admin.New(store, admin.Access{Role: admin.Write})
 		go func() {
 			_ = http.ListenAndServe(fc.AdminHTTPWrite, withAuthToken(fc.AdminHTTPWriteToken, writeH))
 		}()
 	}
 	if fc.AdminHTTPAuth != "" {
+		log.Printf("admin listening addr=%s kind=http-auth", fc.AdminHTTPAuth)
 		authH := admin.New(store, admin.Access{
 			Role: admin.Auth, SourceID: authSource, Application: store.AuthApplication(),
 		})

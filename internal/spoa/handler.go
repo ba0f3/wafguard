@@ -2,6 +2,7 @@ package spoa
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
@@ -79,7 +80,9 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 	}
 	result := "ok"
 	defer func() {
-		h.Telemetry.RecordOperation(operation, result, time.Since(start))
+		d := time.Since(start)
+		h.Telemetry.RecordOperation(operation, result, d)
+		log.Printf("spoe kind=%s operation=%s result=%s duration_ms=%d", name, operation, result, d.Milliseconds())
 	}()
 
 	select {
