@@ -4,8 +4,9 @@ services:
   wafguard:
     volumes:
       - ${OPERATOR_WAFGUARD_CONFIG}:/etc/wafguard/config.json:ro
+    # SPOE listener (12345) is deliberately unpublished; only lab admin and
+    # metrics ports are bound to loopback.
     ports:
-      - "12345:12345"
       - "127.0.0.1:9090:9090"
       - "127.0.0.1:19201:19201"
       - "127.0.0.1:19200:19200"

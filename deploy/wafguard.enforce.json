@@ -3,6 +3,7 @@
   "spop_listen": "0.0.0.0:12345",
   "metrics_listen": "0.0.0.0:9090",
   "admin_http_write": "0.0.0.0:19200",
+  "admin_http_write_token": "operator-lab-only",
   "default_mode": "enforce",
   "admission_ttl_seconds": 120,
   "redis": { "addr": "redis:6379" },

@@ -1,0 +1,3 @@
+# One request path prefix per line. Body waiting is opt-in and bounded to
+# 500 ms. Benign lab path below exercises the delayed-body fixture.
+/ok

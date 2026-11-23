@@ -29,8 +29,8 @@ const (
 type Mode string
 
 const (
-	ModeObserve  Mode = "observe"
-	ModeEnforce  Mode = "enforce"
+	ModeObserve Mode = "observe"
+	ModeEnforce Mode = "enforce"
 )
 
 type Kind string
@@ -80,31 +80,32 @@ type Verdict struct {
 }
 
 type Event struct {
-	Request             Request
-	ID                  string
-	Kind                Kind
-	Phase               Phase
-	Admission           *Admission
-	RequestWAF          Verdict
-	ResponseWAF         *Verdict
-	OriginStatus        *int
-	FinalClientStatus   *int
-	OwnRejection        bool
+	Request           Request
+	ID                string
+	Kind              Kind
+	Phase             Phase
+	Admission         *Admission
+	RequestWAF        Verdict
+	ResponseWAF       *Verdict
+	OriginStatus      *int
+	FinalClientStatus *int
+	OwnRejection      bool
 }
 
 type Decision struct {
-	Action    Action
-	Admission *Admission
-	ExpiresAt time.Time
-	Degraded  bool
+	Action      Action
+	Admission   *Admission
+	ExpiresAt   time.Time
+	Degraded    bool
+	Explanation string
 }
 
 type Limits struct {
-	AllowedApps    map[string]struct{}
+	AllowedApps     map[string]struct{}
 	AllowedBackends map[string]struct{}
-	MaxPathLen     int
-	MaxRuleIDs     int
-	MaxCategoryLen int
+	MaxPathLen      int
+	MaxRuleIDs      int
+	MaxCategoryLen  int
 }
 
 type InvalidReason string
@@ -190,12 +191,17 @@ func Validate(limits Limits, ev Event) (InvalidReason, bool) {
 	if !ok || ev.Phase != wantPhase {
 		return InvalidKindPhase, false
 	}
-	maxPath := limits.MaxPathLen
-	if maxPath == 0 {
-		maxPath = 1024
-	}
-	if len(ev.Request.Path) > maxPath || HasControlChar(ev.Request.Path) {
-		return InvalidControlChar, false
+	// Admission never needs the path. Older SPOP callers send the full raw
+	// path (query included) or very long paths here; rejecting them would
+	// break check-ban for benign requests.
+	if ev.Kind != KindCheckBan {
+		maxPath := limits.MaxPathLen
+		if maxPath == 0 {
+			maxPath = 1024
+		}
+		if len(ev.Request.Path) > maxPath || HasControlChar(ev.Request.Path) {
+			return InvalidControlChar, false
+		}
 	}
 	for _, field := range []string{ev.Request.Application, ev.Request.Backend, ev.Request.Method, ev.Request.NodeID, ev.Request.RouteGroup} {
 		if len(field) > limits.MaxCategoryLen || HasControlChar(field) {
@@ -221,4 +227,3 @@ func Validate(limits Limits, ev Event) (InvalidReason, bool) {
 func UnknownDecision(degraded bool) Decision {
 	return Decision{Action: ActionUnknown, Degraded: degraded}
 }
-

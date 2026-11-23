@@ -34,6 +34,7 @@ func testBruteStore(t *testing.T) (*state.Store, redis.UniversalClient, string) 
 		Namespace:   ns,
 		DefaultMode: event.ModeEnforce,
 		Apps:        map[string]policy.Config{"sample_app": cfg},
+		AuthSource:  "login-app",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +51,7 @@ func postAuthObserve(t *testing.T, store *state.Store, ip netip.Addr, rid string
 		Application: "sample_app",
 		RequestID:   rid,
 		Outcome:     policy.AuthFailure,
-		SourceID:    "login",
+		SourceID:    "login-app",
 		ClientIP:    ip,
 	}
 	ev := event.Event{
@@ -112,8 +113,9 @@ func TestBruteForceDuplicateAuthReceiptRealRedis(t *testing.T) {
 	bruteKey := ns + ":brute:sample_app:" + ip.String()
 	rcpt := policy.AuthReceipt{
 		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure,
-		SourceID: "login", ClientIP: ip,
+		SourceID: "login-app", ClientIP: ip,
 	}
+	admission, _ := store.Check(ctx, event.Request{Application: "sample_app", RequestID: rid, ClientIP: ip})
 	_ = store.RecordAuth(ctx, rcpt)
 	_ = store.RecordAuth(ctx, rcpt)
 	ev := event.Event{
@@ -122,8 +124,7 @@ func TestBruteForceDuplicateAuthReceiptRealRedis(t *testing.T) {
 		Kind:       event.KindWafVerdict,
 		RequestWAF: event.Verdict{Action: "allow", Source: "enforced"},
 	}
-	d, _ := store.Check(ctx, ev.Request)
-	ev.Admission = d.Admission
+	ev.Admission = admission.Admission
 	_ = store.Observe(ctx, ev)
 	if n, _ := client.ZCard(ctx, bruteKey).Result(); n != 1 {
 		t.Fatalf("joined failure counts once, got %d", n)

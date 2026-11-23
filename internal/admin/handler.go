@@ -27,6 +27,10 @@ type Access struct {
 	Application string
 }
 
+// RequestIDHeader carries the proxy-generated admission id. A client-supplied
+// request_id in the JSON body is never trusted for auth correlation.
+const RequestIDHeader = "X-Wafguard-Request-Id"
+
 func New(store *state.Store, access Access) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/apps/", func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +121,12 @@ func New(store *state.Store, access Access) http.Handler {
 			if !decodeBody(w, r, &rcpt) {
 				return
 			}
+			proxyID := r.Header.Get(RequestIDHeader)
+			if err := event.ParseUUIDv4(proxyID); err != nil {
+				http.Error(w, "valid proxy request id required", http.StatusBadRequest)
+				return
+			}
+			rcpt.RequestID = proxyID
 			rcpt.Application = app
 			rcpt.SourceID = access.SourceID
 			if err := store.RecordAuth(r.Context(), rcpt); err != nil {

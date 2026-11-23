@@ -32,14 +32,15 @@ func TestLostCommitObserveFenced(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.66")
-	d1, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	rid := "550e8400-e29b-41d4-a716-446655440088"
+	d1, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid})
 	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip, OperationID: "op-lost"}); err != nil {
 		t.Fatal(err)
 	}
 	d2, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
 	ev := event.Event{
-		Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: "550e8400-e29b-41d4-a716-446655440088"},
-		ID:         event.EventID("sample_app", "550e8400-e29b-41d4-a716-446655440088", event.KindWafVerdict),
+		Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid},
+		ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
 		Kind:       event.KindWafVerdict,
 		Admission:  d1.Admission,
 		RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
@@ -64,10 +65,6 @@ func TestSharedBan(t *testing.T) {
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.8")
 	req := event.Request{Application: "sample_app", ClientIP: ip}
-	d1, err := store.Check(ctx, req)
-	if err != nil || d1.Action != event.ActionAllow {
-		t.Fatalf("first check: %v %v", d1, err)
-	}
 	ids := []string{
 		"550e8400-e29b-41d4-a716-446655440001",
 		"550e8400-e29b-41d4-a716-446655440002",
@@ -76,12 +73,16 @@ func TestSharedBan(t *testing.T) {
 	for _, rid := range ids {
 		r := req
 		r.RequestID = rid
+		admission, err := store.Check(ctx, r)
+		if err != nil {
+			t.Fatal(err)
+		}
 		ev := event.Event{
 			Request:    r,
 			ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
 			Kind:       event.KindWafVerdict,
 			Phase:      event.PhaseRequest,
-			Admission:  d1.Admission,
+			Admission:  admission.Admission,
 			RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
 		}
 		if err := store.Observe(ctx, ev); err != nil {
@@ -103,11 +104,12 @@ func TestAuthReceiptJoinBothOrders(t *testing.T) {
 
 	rid := "550e8400-e29b-41d4-a716-446655440020"
 	key := "test:auth:sample_app:" + rid
+	admit1, _ := store.Check(ctx, event.Request{Application: "sample_app", RequestID: rid, ClientIP: netip.MustParseAddr("192.0.2.1")})
 	if err := store.RecordAuth(ctx, policy.AuthReceipt{
 		Application: "sample_app",
 		RequestID:   rid,
 		Outcome:     policy.AuthFailure,
-		SourceID:    "login",
+		SourceID:    "login-app",
 		ClientIP:    netip.MustParseAddr("192.0.2.1"),
 	}); err != nil {
 		t.Fatal(err)
@@ -118,8 +120,7 @@ func TestAuthReceiptJoinBothOrders(t *testing.T) {
 		Kind:       event.KindWafVerdict,
 		RequestWAF: event.Verdict{Action: "allow", Source: "enforced"},
 	}
-	d, _ := store.Check(ctx, ev.Request)
-	ev.Admission = d.Admission
+	ev.Admission = admit1.Admission
 	if err := store.Observe(ctx, ev); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestAuthReceiptJoinBothOrders(t *testing.T) {
 		Application: "sample_app",
 		RequestID:   rid2,
 		Outcome:     policy.AuthSuccess,
-		SourceID:    "login",
+		SourceID:    "login-app",
 		ClientIP:    netip.MustParseAddr("192.0.2.2"),
 	}); err != nil {
 		t.Fatal(err)
@@ -165,13 +166,14 @@ func TestAuthReceiptDuplicateRejected(t *testing.T) {
 	ctx := context.Background()
 	rid := "550e8400-e29b-41d4-a716-446655440012"
 	key := "test:auth:sample_app:" + rid
+	_, _ = store.Check(ctx, event.Request{Application: "sample_app", RequestID: rid, ClientIP: netip.MustParseAddr("192.0.2.3")})
 	if err := store.RecordAuth(ctx, policy.AuthReceipt{
-		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure, SourceID: "login", ClientIP: netip.MustParseAddr("192.0.2.3"),
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure, SourceID: "login-app", ClientIP: netip.MustParseAddr("192.0.2.3"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordAuth(ctx, policy.AuthReceipt{
-		Application: "sample_app", RequestID: rid, Outcome: policy.AuthSuccess, SourceID: "login", ClientIP: netip.MustParseAddr("192.0.2.3"),
+		Application: "sample_app", RequestID: rid, Outcome: policy.AuthSuccess, SourceID: "login-app", ClientIP: netip.MustParseAddr("192.0.2.3"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -184,19 +186,21 @@ func TestAuthReceiptStoredOnce(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()
 	rid := "550e8400-e29b-41d4-a716-446655440010"
+	rid2 := "550e8400-e29b-41d4-a716-446655440011"
+	ip := netip.MustParseAddr("192.0.2.4")
+	_, _ = store.Check(ctx, event.Request{Application: "sample_app", RequestID: rid, ClientIP: ip})
+	_, _ = store.Check(ctx, event.Request{Application: "sample_app", RequestID: rid2, ClientIP: ip})
 	for i := 0; i < 2; i++ {
 		if err := store.RecordAuth(ctx, policy.AuthReceipt{
-			Application: "sample_app",
-			RequestID:   rid,
-			Outcome:     policy.AuthFailure,
+			Application: "sample_app", RequestID: rid, Outcome: policy.AuthFailure,
+			SourceID: "login-app", ClientIP: ip,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := store.RecordAuth(ctx, policy.AuthReceipt{
-		Application: "sample_app",
-		RequestID:   "550e8400-e29b-41d4-a716-446655440011",
-		Outcome:     policy.AuthSuccess,
+		Application: "sample_app", RequestID: rid2, Outcome: policy.AuthSuccess,
+		SourceID: "login-app", ClientIP: ip,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -215,9 +219,9 @@ func TestObserveModeShadow(t *testing.T) {
 	}
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.9")
-	d, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
 	for i := 0; i < 3; i++ {
 		rid := fmt.Sprintf("650e8400-e29b-41d4-a716-44665544000%d", i+1)
+		d, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid})
 		ev := event.Event{
 			Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid},
 			ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
@@ -232,4 +236,3 @@ func TestObserveModeShadow(t *testing.T) {
 		t.Fatal("observe mode should not enforce ban")
 	}
 }
-

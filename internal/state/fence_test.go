@@ -13,11 +13,16 @@ import (
 
 func observeDeny(t *testing.T, store *state.Store, d event.Decision, ip netip.Addr, rid string) {
 	t.Helper()
+	// Each request carries its own admission token, minted at check-ban time.
+	fresh, err := store.Check(context.Background(), event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ev := event.Event{
 		Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid},
 		ID:         event.EventID("sample_app", rid, event.KindWafVerdict),
 		Kind:       event.KindWafVerdict,
-		Admission:  d.Admission,
+		Admission:  fresh.Admission,
 		RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
 	}
 	if err := store.Observe(context.Background(), ev); err != nil {
@@ -38,10 +43,10 @@ func TestUnbanFence(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.55")
-	d1, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
 	for i := 0; i < 3; i++ {
-		observeDeny(t, store, d1, ip, fmt.Sprintf("750e8400-e29b-41d4-a716-4466554400%d", i))
+		observeDeny(t, store, event.Decision{}, ip, fmt.Sprintf("750e8400-e29b-41d4-a716-4466554400%d", i))
 	}
+	staleAdmission, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip, RequestID: "750e8400-e29b-41d4-a716-446655440099"})
 	if _, err := store.Unban(ctx, state.UnbanRequest{Application: "sample_app", ClientIP: ip}); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +54,7 @@ func TestUnbanFence(t *testing.T) {
 		Request:    event.Request{Application: "sample_app", ClientIP: ip, RequestID: "750e8400-e29b-41d4-a716-446655440099"},
 		ID:         event.EventID("sample_app", "750e8400-e29b-41d4-a716-446655440099", event.KindWafVerdict),
 		Kind:       event.KindWafVerdict,
-		Admission:  d1.Admission,
+		Admission:  staleAdmission.Admission,
 		RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
 	}
 	_ = store.Observe(ctx, ev)
@@ -63,7 +68,7 @@ func TestModeRevisionFence(t *testing.T) {
 	store, _ := testStore(t)
 	ctx := context.Background()
 	ip := netip.MustParseAddr("192.0.2.56")
-	d1, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip})
+	d1, _ := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip, RequestID: "850e8400-e29b-41d4-a716-446655440001"})
 	old := d1.Admission
 	_, err := store.SetPolicy(ctx, "sample_app", 0, policy.DefaultConfig(), event.ModeObserve)
 	if err != nil {

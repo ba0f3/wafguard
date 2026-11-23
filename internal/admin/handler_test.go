@@ -1,8 +1,10 @@
 package admin_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -70,9 +72,12 @@ func TestAdminRoles(t *testing.T) {
 		}
 	}
 
-	authH := admin.New(store, admin.Access{Role: admin.Auth, SourceID: "login"})
-	authBody := `{"request_id":"rid-auth","outcome":"failure"}`
+	authH := admin.New(store, admin.Access{Role: admin.Auth, SourceID: "login-app"})
+	rid := "550e8400-e29b-41d4-a716-446655440077"
+	_, _ = store.Check(context.Background(), event.Request{Application: "sample_app", RequestID: rid, ClientIP: netip.MustParseAddr("192.0.2.70")})
+	authBody := `{"request_id":"client-forged-value","outcome":"failure"}`
 	authReq := httptest.NewRequest(http.MethodPost, "/v1/apps/sample_app/auth-outcomes", strings.NewReader(authBody))
+	authReq.Header.Set(admin.RequestIDHeader, rid)
 	authW := httptest.NewRecorder()
 	authH.ServeHTTP(authW, authReq)
 	if authW.Code != http.StatusNoContent {

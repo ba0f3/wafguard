@@ -44,13 +44,13 @@ type Config struct {
 }
 
 type Evidence struct {
-	WAFDeny         bool
-	DetectionMatch  bool
-	ResponseSeen    bool
-	Eligible4xx     bool
-	ProbePath       bool
-	Backend5xx      bool
-	PathKey         string
+	WAFDeny        bool
+	DetectionMatch bool
+	ResponseSeen   bool
+	Eligible4xx    bool
+	ProbePath      bool
+	Backend5xx     bool
+	PathKey        string
 }
 
 func DefaultConfig() Config {
@@ -72,9 +72,62 @@ func DefaultConfig() Config {
 	}
 }
 
+// WithDefaults fills unset (zero) numeric and list fields from DefaultConfig.
+// A partially configured app must never inherit a zero threshold that would
+// ban on the first failure.
+func WithDefaults(cfg Config) Config {
+	d := DefaultConfig()
+	if cfg.WAFDenyWindowSec <= 0 {
+		cfg.WAFDenyWindowSec = d.WAFDenyWindowSec
+	}
+	if cfg.WAFDenyThreshold <= 0 {
+		cfg.WAFDenyThreshold = d.WAFDenyThreshold
+	}
+	if cfg.WAFDenyBanSec <= 0 {
+		cfg.WAFDenyBanSec = d.WAFDenyBanSec
+	}
+	if cfg.ScannerWindowSec <= 0 {
+		cfg.ScannerWindowSec = d.ScannerWindowSec
+	}
+	if cfg.ScannerResponses <= 0 {
+		cfg.ScannerResponses = d.ScannerResponses
+	}
+	if cfg.ScannerPaths <= 0 {
+		cfg.ScannerPaths = d.ScannerPaths
+	}
+	if cfg.BruteWindowSec <= 0 {
+		cfg.BruteWindowSec = d.BruteWindowSec
+	}
+	if cfg.BruteFailures <= 0 {
+		cfg.BruteFailures = d.BruteFailures
+	}
+	if cfg.ThrottleSec <= 0 {
+		cfg.ThrottleSec = d.ThrottleSec
+	}
+	if cfg.OutageWindowSec <= 0 {
+		cfg.OutageWindowSec = d.OutageWindowSec
+	}
+	if cfg.OutageUniqueIPs <= 0 {
+		cfg.OutageUniqueIPs = d.OutageUniqueIPs
+	}
+	if cfg.MaxEventAgeSec <= 0 {
+		cfg.MaxEventAgeSec = d.MaxEventAgeSec
+	}
+	if cfg.AdmissionTTL <= 0 {
+		cfg.AdmissionTTL = d.AdmissionTTL
+	}
+	if len(cfg.ProbePaths) == 0 {
+		cfg.ProbePaths = d.ProbePaths
+	}
+	return cfg
+}
+
 func Validate(cfg Config) error {
-	if cfg.WAFDenyThreshold < 1 {
-		return fmt.Errorf("waf deny threshold must be >= 1")
+	if cfg.WAFDenyWindowSec < 1 || cfg.WAFDenyThreshold < 1 || cfg.WAFDenyBanSec < 1 {
+		return fmt.Errorf("waf deny window/threshold/ban must be >= 1")
+	}
+	if cfg.BruteWindowSec < 1 || cfg.BruteFailures < 1 {
+		return fmt.Errorf("brute window/failures must be >= 1")
 	}
 	if cfg.MaxEventAgeSec < cfg.AdmissionTTL {
 		return fmt.Errorf("max_event_age must be >= admission TTL")
@@ -133,4 +186,3 @@ func WAFDenyContribution(e event.Event, cfg Config) bool {
 	ev := Classify(e, cfg)
 	return ev.WAFDeny && !e.OwnRejection && !e.RequestWAF.InspectionError
 }
-

@@ -1,0 +1,4 @@
+# Isolated host port for the rollout's second HAProxy instance.
+services:
+  haproxy-b:
+    ports: !override ["38082:8080"]

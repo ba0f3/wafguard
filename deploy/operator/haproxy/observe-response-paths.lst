@@ -1,0 +1,3 @@
+# Opt-in response status observation. Benign lab path for validation; remove
+# for production unless a status consumer is configured.
+/ok

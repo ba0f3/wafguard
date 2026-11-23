@@ -38,7 +38,14 @@ func repoRoot(t *testing.T) string {
 func composeFailover(t *testing.T, args ...string) {
 	t.Helper()
 	root := repoRoot(t)
-	base := []string{"compose", "-f", "integration/compose.yaml", "-f", "integration/compose.failover.yaml"}
+	files := os.Getenv("WAF_COMPOSE_FILES")
+	if files == "" {
+		files = "integration/compose.yaml integration/compose.failover.yaml"
+	}
+	base := []string{"compose"}
+	for _, f := range strings.Fields(files) {
+		base = append(base, "-f", f)
+	}
 	cmd := exec.Command("docker", append(base, args...)...)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
@@ -55,7 +62,11 @@ func waitReplicaPromoted(t *testing.T) {
 	for time.Now().Before(deadline) {
 		addr, err := sent.GetMasterAddrByName(ctx, "mymaster").Result()
 		if err == nil && len(addr) >= 2 && addr[0] != "redis" {
-			prim := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6380"})
+			replicaAddr := os.Getenv("REDIS_REPLICA_ADDR")
+			if replicaAddr == "" {
+				replicaAddr = "127.0.0.1:6380"
+			}
+			prim := redis.NewClient(&redis.Options{Addr: replicaAddr})
 			info, err := prim.Info(ctx, "replication").Result()
 			prim.Close()
 			if err == nil && strings.Contains(info, "role:master") {

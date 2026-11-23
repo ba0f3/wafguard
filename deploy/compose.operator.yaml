@@ -1,0 +1,82 @@
+# Standalone, production-shaped operator deployment.
+#
+# All SPOE traffic (wafguard check-ban, Coraza SPOA, Redis) stays on the
+# internal `spoe` network: no SPOE port is published to the host. Only the
+# lab-facing HAProxy listener, metrics and the two admin listeners are bound
+# to loopback for isolated integration validation.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    networks: [spoe]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  wafguard:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ${OPERATOR_WAFGUARD_CONFIG:-../deploy/operator/wafguard-observe.json}:/etc/wafguard/config.json:ro
+    environment:
+      - WG_CONFIG=/etc/wafguard/config.json
+    # `front` carries only loopback-lab admin/metrics; SPOE and Redis traffic
+    # stays on the internal `spoe` network.
+    networks: [front, spoe]
+    ports:
+      - "127.0.0.1:${OPERATOR_METRICS_PORT:-29090}:9090"
+      - "127.0.0.1:${OPERATOR_WRITE_PORT:-29200}:19200"
+      - "127.0.0.1:${OPERATOR_AUTH_PORT:-29201}:19201"
+
+  wafguard2:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ${OPERATOR_WAFGUARD_CONFIG2:-../deploy/operator/wafguard-observe.json}:/etc/wafguard/config.json:ro
+    environment:
+      - WG_CONFIG=/etc/wafguard/config.json
+    networks: [spoe]
+
+  coraza-spoa:
+    image: ghcr.io/corazawaf/coraza-spoa:0.9.1
+    volumes:
+      - ${OPERATOR_CORAZA_CONFIG:-../deploy/operator/coraza-spoa.yaml}:/config.yaml:ro
+    networks: [spoe]
+
+  coraza-spoa-b:
+    image: ghcr.io/corazawaf/coraza-spoa:0.9.1
+    volumes:
+      - ${OPERATOR_CORAZA_CONFIG:-../deploy/operator/coraza-spoa.yaml}:/config.yaml:ro
+    networks: [spoe]
+
+  haproxy:
+    image: ${OPERATOR_HAPROXY_IMAGE:-haproxy:3.2.0}
+    depends_on: [wafguard, wafguard2, coraza-spoa, coraza-spoa-b, testorigin]
+    volumes:
+      - ${OPERATOR_HAPROXY_DIR:-../deploy/operator/haproxy}:/usr/local/etc/haproxy:ro
+    networks: [front, spoe]
+    ports:
+      - "127.0.0.1:${OPERATOR_HAPROXY_PORT:-28080}:8080"
+
+  # Benign lab stand-in for the operator's origin; replace with the real origin
+  # (and drop this service) in production.
+  testorigin:
+    build:
+      context: ..
+      dockerfile: integration/images/testorigin.Dockerfile
+    networks: [front]
+
+networks:
+  front: {}
+  spoe:
+    internal: true

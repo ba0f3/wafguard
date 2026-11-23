@@ -47,7 +47,7 @@ func TestClassifyEnforcementRequiresSource(t *testing.T) {
 func TestClassifyProbeAnd4xx(t *testing.T) {
 	cfg := policy.DefaultConfig()
 	ev := event.Event{
-		Request: event.Request{Path: "/.env"},
+		Request:      event.Request{Path: "/.env"},
 		OriginStatus: func() *int { v := 404; return &v }(),
 		RequestWAF:   event.Verdict{Action: "allow", Source: "enforced"},
 	}
@@ -74,3 +74,21 @@ func TestPolicyBoundaries(t *testing.T) {
 	}
 }
 
+func TestWithDefaultsPartialOperatorConfig(t *testing.T) {
+	cfg := policy.WithDefaults(policy.Config{
+		WAFDenyWindowSec: 30,
+		WAFDenyThreshold: 3,
+		WAFDenyBanSec:    900,
+		MaxEventAgeSec:   120,
+		AdmissionTTL:     120,
+	})
+	if cfg.BruteFailures != policy.DefaultConfig().BruteFailures || cfg.BruteWindowSec != policy.DefaultConfig().BruteWindowSec {
+		t.Fatalf("unconfigured brute force must get safe defaults: %+v", cfg)
+	}
+	if err := policy.Validate(cfg); err != nil {
+		t.Fatalf("normalized config invalid: %v", err)
+	}
+	if err := policy.Validate(policy.Config{}); err == nil {
+		t.Fatal("zero config must be rejected explicitly")
+	}
+}
