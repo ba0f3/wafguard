@@ -7,9 +7,9 @@ Go SPOA for HAProxy: combines **upstream Coraza SPOA v0.9.1** verdicts with cros
 ```sh
 make compose-config
 make compose-up
-export WAF_INTEGRATION=1
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/ok
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/marker-deny
+export WAF_INTEGRATION=1 HAPROXY_PORT=18080
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18080/ok
+curl -s -o /dev/null -w "%{http_code}\n" -H 'User-Agent: fixture-deny-request' http://127.0.0.1:18080/ok
 make it-stock HAPROXY_SERIES=3.2
 ```
 

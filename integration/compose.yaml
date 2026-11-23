@@ -34,7 +34,7 @@ services:
   coraza-spoa:
     image: ghcr.io/corazawaf/coraza-spoa:0.9.1
     volumes:
-      - ./fixtures/coraza-spoa.yaml:/etc/coraza-spoa/config.yaml:ro
+      - ./fixtures/coraza-spoa.yaml:/config.yaml:ro
     ports: ["9000:9000"]
 
   haproxy:

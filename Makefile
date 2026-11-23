@@ -1,6 +1,6 @@
 HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
-export COMPOSE_PROJECT_NAME := wafguard-it
+export COMPOSE_PROJECT_NAME ?= integration
 
 .PHONY: build test it-redis it-stock it-rollout it-load compose-config compose-up
 
@@ -13,12 +13,18 @@ race:
 test:
 	go test ./... -count=1
 
-it-redis:
-	go test -tags=integration ./internal/state -count=1
+COMPOSE_FILES := -f integration/compose.yaml
+ifneq ($(HAPROXY_SERIES),3.2)
+COMPOSE_FILES += -f integration/compose.haproxy34.yaml
+endif
 
 it-stock:
-	haproxy -c -f deploy/haproxy/haproxy.cfg || (echo "haproxy syntax check skipped: binary missing"; true)
-	go test -tags=integration ./integration -run '^TestStock' -count=1
+	@echo "HAProxy series $(HAPROXY_SERIES)"
+	docker compose $(COMPOSE_FILES) exec -T haproxy haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
+	WAF_INTEGRATION=1 HAPROXY_PORT=18080 go test -tags=integration ./integration -run '^TestStock' -count=1
+
+it-redis:
+	REDIS_ADDR=$${REDIS_ADDR:-127.0.0.1:6379} go test -tags=integration ./internal/state -count=1
 
 it-rollout:
 	go test -tags=integration ./integration -run '^TestRollout' -count=1

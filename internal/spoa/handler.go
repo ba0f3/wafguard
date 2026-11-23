@@ -121,9 +121,12 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		}
 		h.Telemetry.RecordEvent(string(ev.Kind), string(d.Action))
 	case event.KindWafVerdict, event.KindObserveResponse:
-		if ev.Kind == event.KindWafVerdict && ev.Admission == nil {
+		if ev.Admission == nil {
 			result = "missing_admission"
 			h.Telemetry.RecordDrop("missing_admission")
+			if ev.Kind == event.KindWafVerdict {
+				return
+			}
 			return
 		}
 		if err := h.Backend.Observe(opCtx, ev); err != nil {
