@@ -74,6 +74,9 @@ delayed and chunked cases return 200 again (verified red).
   `coraza-response-sync` runs, for MIME types listed in `SecResponseBodyMimeType`, on paths
   marked `txn.wafguard.res_insp`. `wait-for-body` waits up to 500 ms for the body; a body
   arriving later makes HAProxy answer 504, not a WAF verdict.
+- **Positive control:** a marker within the buffered prefix is denied (403 `waf-block: response`) on both HAProxy 3.2.0 and 3.4.0 for prompt, delayed and chunked bodies.
+- **Negative limitation:** a marker beyond the buffered prefix is not blocked (200) on both releases; this is the measured marker-beyond-buffer case, not a verdict-application bug.
+- **Operator example:** `deploy/operator/haproxy/res-inspect-paths.lst` sets the inspected URL prefixes and `SecResponseBodyMimeType` in `deploy/operator/coraza-spoa.yaml` sets the inspected MIME types; neither uses a fixture route as a production feature.
 - **Not guaranteed:** full-response coverage. A response larger than HAProxy's buffer is
   truncated before it reaches Coraza (measured ~15 kB of a 200 kB body with default
   `tune.bufsize`). A marker after that prefix is **not blocked** and the client receives

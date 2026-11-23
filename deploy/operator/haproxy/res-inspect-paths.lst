@@ -1,0 +1,4 @@
+# One URL prefix per line: responses for these paths are sent to Coraza phase 4.
+# Replace these examples with your application's real route prefixes.
+/api/
+/v1/

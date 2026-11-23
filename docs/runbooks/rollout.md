@@ -34,6 +34,15 @@ Edit **`$OPERATOR_HAPROXY_DIR/haproxy.cfg`** `backend origin`:
 
 `default_backend origin` on `frontend http_in` forwards allowed traffic there after SPOE.
 
+### Response body inspection (bounded)
+
+Two operator-editable settings control it; no fixture route is a production feature:
+
+- Routes: `$OPERATOR_HAPROXY_DIR/res-inspect-paths.lst`, one URL prefix per line (example: `/api/`, `/v1/`). Replace with your real prefixes. `frontend http_in` sets `txn.wafguard.res_insp` from this file and runs `coraza-response-sync` only for those paths.
+- MIME types: `SecResponseBodyMimeType` in `$OPERATOR_CORAZA_CONFIG` (`deploy/operator/coraza-spoa.yaml`), plus `SecResponseBodyAccess On` and `response_check: true`. Coraza buffers only the listed types.
+
+`http-response wait-for-body time 500` delays those responses by at most 500 ms so late/chunked bodies are present at rule time. Coverage is bounded, not full-body: with default HAProxy buffers only ~15 kB reaches Coraza; a marker beyond that prefix is not blocked, and a body arriving after 500 ms yields a 504. Do not claim full-response protection. See `docs/evidence/2026-11-23-response-body-inspection.md` for measured lengths and both HAProxy releases.
+
 ### Start (operator overlay)
 
 ```sh
