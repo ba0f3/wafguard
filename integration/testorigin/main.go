@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 var hits atomic.Uint64
@@ -51,6 +52,32 @@ func main() {
 	})
 	mux.HandleFunc("/phase4-body-marker", func(w http.ResponseWriter, r *http.Request) {
 		fixturePhase4(w, r, `{"tag":"phase4-only-marker"}`)
+	})
+	mux.HandleFunc("/phase4-body-delayed", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Phase4-Fixture", "constant")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		time.Sleep(250 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"tag":"phase4-only-marker"}`)
+	})
+	mux.HandleFunc("/phase4-body-chunked", func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Phase4-Fixture", "constant")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"tag":"phase4-only-`)
+		w.(http.Flusher).Flush()
+		time.Sleep(250 * time.Millisecond)
+		_, _ = io.WriteString(w, `marker"}`)
+	})
+	largePad := strings.Repeat("x", 200000)
+	mux.HandleFunc("/phase4-body-large-early", func(w http.ResponseWriter, r *http.Request) {
+		fixturePhase4(w, r, `{"tag":"phase4-only-marker","pad":"`+largePad+`"}`)
+	})
+	mux.HandleFunc("/phase4-body-large-late", func(w http.ResponseWriter, r *http.Request) {
+		fixturePhase4(w, r, `{"pad":"`+largePad+`","tag":"phase4-only-marker"}`)
 	})
 	mux.HandleFunc("/fixture-disconnect-precheck", func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)

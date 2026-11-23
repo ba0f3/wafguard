@@ -13,6 +13,7 @@ applications:
       SecRule REQUEST_URI "@streq /phase4-body-control" "id:1005,phase:1,pass"
       SecRule REQUEST_URI "@streq /phase4-body-marker" "id:1006,phase:1,pass"
       SecResponseBodyAccess On
+      SecResponseBodyMimeType application/json text/plain text/html
       SecResponseBodyLimit 131072
       SecRule RESPONSE_BODY "@contains phase4-only-marker" "id:4001,phase:4,deny,status:403"
     response_check: true

@@ -25,9 +25,9 @@ Overlay: `compose.phase4only.yaml` → `coraza-spoa-phase4only.yaml` (only `phas
 | URL | Status | Headers | Body |
 |-----|--------|---------|------|
 | `/phase4-body-control` | **200** | `X-Phase4-Fixture: constant`, `Content-Type: application/json` | `{"tag":"neutral-body"}` |
-| `/phase4-body-marker` | **200** | same headers | `{"tag":"phase4-only-marker"}` |
+| `/phase4-body-marker` | **200 (historical)** | same headers | `{"tag":"phase4-only-marker"}` |
 
-Bodies differ; status/headers identical. **`SecResponseBodyLimit` 131072**; deny did not fire on coraza-spoa **0.9.1** with `coraza-response-sync` in this topology—use phase-3 header control for enforced negative stock tests.
+Bodies differ; status/headers identical. This was measured before `SecResponseBodyMimeType` was configured; the phase-4-only deny now returns 403. See `2026-11-23-response-body-inspection.md` for the root cause and the remaining buffered-prefix limit.
 
 ## Phase 4 response body (stock stack, `coraza-spoa-response.yaml`)
 
@@ -44,5 +44,5 @@ Bodies differ; status/headers identical. **`SecResponseBodyLimit` 131072**; deny
 ## Unresolved
 
 - Active/active dual Coraza with response body inspect (no backup shortcut)
-- Phase-4-only body deny on coraza-spoa 0.9.1 without phase-3 helper
+- ~~Phase-4-only body deny on coraza-spoa 0.9.1 without phase-3 helper~~ resolved by `SecResponseBodyMimeType` + `http-response wait-for-body`; see `2026-11-23-response-body-inspection.md` for the remaining buffered-prefix limit.
 - `txn.wafguard.res_insp_err` not observed in recorder SPOE args on response phase (heuristic snapshot)

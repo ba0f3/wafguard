@@ -144,7 +144,7 @@ it-phase4-only:
 	docker compose -f integration/compose.yaml build testorigin
 	docker compose $(COMPOSE_PHASE4) $(if $(filter 3.4,$(HAPROXY_SERIES)),-f integration/compose.haproxy34.yaml,) up -d --build --force-recreate coraza-spoa testorigin haproxy
 	sleep 5
-	WAF_PHASE4_ONLY=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockResponseBodyPhase4Only' -count=1 -v
+	WAF_PHASE4_ONLY=1 WAF_INTEGRATION=1 go test -tags=integration ./integration -run '^TestStockResponseBodyPhase4' -count=1 -v
 	docker compose -f integration/compose.yaml up -d --force-recreate coraza-spoa testorigin haproxy
 
 it-phase4-only-all:
