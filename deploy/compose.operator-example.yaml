@@ -1,0 +1,18 @@
+# Operator-owned config paths (set via env before compose up).
+# Stand-in origin: integration testorigin (replace OPERATOR_CORAZA_CONFIG / rules for production).
+services:
+  wafguard:
+    volumes:
+      - ${OPERATOR_WAFGUARD_CONFIG}:/etc/wafguard/config.json:ro
+    ports:
+      - "12345:12345"
+      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:19201:19201"
+  coraza-spoa:
+    volumes:
+      - ${OPERATOR_CORAZA_CONFIG}:/config.yaml:ro
+  haproxy:
+    volumes:
+      - ${OPERATOR_HAPROXY_DIR}:/usr/local/etc/haproxy:ro
+    ports:
+      - "${OPERATOR_HAPROXY_PORT:-18080}:8080"

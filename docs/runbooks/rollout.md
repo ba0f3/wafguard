@@ -34,11 +34,16 @@ Use your origin URL and Coraza policy files; the repo ships a **validated templa
 
 **Rollback:** set `default_mode` back to `observe`, recreate wafguard; `make compose-down` for full lab teardown.
 
-**Validate against local test inputs:**
+**Validate operator artifact (configurable paths):**
 
 ```sh
-bash docs/examples/deploy-operator-validate.sh
+export OPERATOR_WAFGUARD_CONFIG=deploy/operator/wafguard-observe.json
+export OPERATOR_CORAZA_CONFIG=deploy/operator/coraza-spoa.yaml
+export OPERATOR_HAPROXY_DIR=deploy/operator/haproxy
+make validate-operator-deploy
 ```
+
+Compose: `deploy/compose.operator-example.yaml` over `integration/compose.yaml` (testorigin is a **stand-in** upstream only). Metrics and auth bind **127.0.0.1**; auth requires `X-Wafguard-Auth-Token` when `admin_http_auth_token` is set.
 
 ## Shadow (observe)
 

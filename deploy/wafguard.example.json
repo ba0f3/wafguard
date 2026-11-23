@@ -4,7 +4,6 @@
   "metrics_listen": "0.0.0.0:9090",
   "admin_http_auth": "0.0.0.0:19201",
   "admin_http_auth_source": "login-app",
-
   "default_mode": "observe",
   "admission_ttl_seconds": 120,
   "redis": { "addr": "redis:6379" },

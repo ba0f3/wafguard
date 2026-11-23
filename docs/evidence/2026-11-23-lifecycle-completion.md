@@ -1,6 +1,6 @@
-# Lifecycle completion (msg_9605e4cbcab9)
+# Lifecycle completion (msg_9605e4cbcab9, msg_c891d0860d84)
 
-**Base commit:** `b69b1af` → follow-up on branch `ba0f3/waf-spoe-implementation`
+**Commits:** `dad42cc` (auth/deploy split) → operator overlay follow-up on branch `ba0f3/waf-spoe-implementation`
 
 ## Per-series results (lab)
 
@@ -17,7 +17,8 @@ Phase-4-only isolation remains **200** on both series — separate from **403** 
 | Role | Path |
 |------|------|
 | Integration lab script | `docs/examples/shadow-rollback.sh` |
-| Operator validate (fixture inputs) | `docs/examples/deploy-operator-validate.sh` |
+| Operator compose overlay | `deploy/compose.operator-example.yaml` + `deploy/operator/*` (env paths) |
+| Operator validate (observe→enforce→rollback) | `make validate-operator-deploy` / `docs/examples/deploy-operator-validate.sh` |
 | Runbook (lab vs operator sections) | `docs/runbooks/rollout.md` |
 | Observe default config | `deploy/wafguard.example.json` |
 | Auth HTTP listener | `admin_http_auth` **:19201**, `admin_http_auth_source` |

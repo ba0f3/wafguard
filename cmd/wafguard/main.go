@@ -41,6 +41,7 @@ type fileConfig struct {
 	AdminHTTPWrite      string   `json:"admin_http_write"`
 	AdminHTTPAuth       string   `json:"admin_http_auth"`
 	AdminHTTPAuthSource string   `json:"admin_http_auth_source"`
+	AdminHTTPAuthToken  string   `json:"admin_http_auth_token"`
 	EnrichLogFile       string   `json:"enrich_log_file"`
 	EnrichApplication   string   `json:"enrich_application"`
 }
@@ -162,8 +163,9 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 		if src == "" {
 			src = "http-auth"
 		}
+		authH := admin.New(store, admin.Access{Role: admin.Auth, SourceID: src})
 		go func() {
-			_ = http.ListenAndServe(fc.AdminHTTPAuth, admin.New(store, admin.Access{Role: admin.Auth, SourceID: src}))
+			_ = http.ListenAndServe(fc.AdminHTTPAuth, withAuthToken(fc.AdminHTTPAuthToken, authH))
 		}()
 	}
 	if fc.EnrichLogFile != "" {
@@ -187,6 +189,19 @@ func serveUnix(path string, h http.Handler) {
 		return
 	}
 	_ = http.Serve(l, h)
+}
+
+func withAuthToken(token string, h http.Handler) http.Handler {
+	if token == "" {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Wafguard-Auth-Token") != token {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func main() {

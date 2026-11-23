@@ -2,7 +2,7 @@ HAPROXY_SERIES ?= 3.2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
-.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-auth-http it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-phase4-only-all it-gate-sequence compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up
+.PHONY: build test it-redis it-stock it-recorder it-rollout it-load it-enrichment it-enrich-synthetic it-enrich-native it-stock-provenance it-detectonly it-nomarker it-unban-race it-sentinel it-failover it-transport it-response it-observe-mode it-auth-redis it-auth-http it-brute it-coraza-res it-recorder-body it-recorder-body-all it-phase4-only it-phase4-only-all it-gate-sequence validate-operator-deploy compose-config compose-up compose-rollout-up compose-failover-up compose-enrich-up compose-down
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
@@ -163,7 +163,7 @@ it-gate-sequence:
 	$(MAKE) it-stock HAPROXY_SERIES=3.2
 	$(MAKE) it-stock HAPROXY_SERIES=3.4
 	docker compose $(COMPOSE_ROLLOUT) up -d --build wafguard wafguard2 haproxy haproxy-b
-	sleep 3
+	sleep 6
 	$(MAKE) it-rollout it-unban-race
 
 compose-failover-up:
@@ -180,6 +180,9 @@ compose-rollout-up:
 
 compose-recorder-up:
 	docker compose $(COMPOSE_RECORDER) up -d --build
+
+validate-operator-deploy:
+	bash docs/examples/deploy-operator-validate.sh
 
 compose-down:
 	docker compose -f $(COMPOSE_FILE) down -v

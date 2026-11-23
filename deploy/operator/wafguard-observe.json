@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "spop_listen": "0.0.0.0:12345",
+  "metrics_listen": "0.0.0.0:9090",
+  "admin_http_auth": "0.0.0.0:19201",
+  "admin_http_auth_source": "operator-login",
+  "admin_http_auth_token": "operator-lab-only",
+  "default_mode": "observe",
+  "admission_ttl_seconds": 120,
+  "redis": { "addr": "redis:6379" },
+  "limits": {
+    "max_inflight": 256,
+    "allowed_apps": ["sample_app"]
+  },
+  "apps": {
+    "sample_app": {
+      "waf_deny_window_sec": 30,
+      "waf_deny_threshold": 3,
+      "waf_deny_ban_sec": 900,
+      "max_event_age_sec": 120,
+      "admission_ttl": 120
+    }
+  }
+}
