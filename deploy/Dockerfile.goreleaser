@@ -1,0 +1,5 @@
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY wafguard /wafguard
+EXPOSE 12345 9090
+CMD ["/wafguard", "-config", "/etc/wafguard/config.json"]

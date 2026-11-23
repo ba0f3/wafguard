@@ -1,0 +1,37 @@
+version: 2
+
+builds:
+  - id: wafguard
+    main: ./cmd/wafguard
+    binary: wafguard
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+archives:
+  - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+dockers:
+  - dockerfile: deploy/Dockerfile.goreleaser
+    image_templates:
+      - 'ghcr.io/ba0f3/haproxy-waf-spoe:{{ .Version }}'
+      - 'ghcr.io/ba0f3/haproxy-waf-spoe:latest'
+    goos: linux
+    goarch: amd64
+    build_flag_templates:
+      - '--label=org.opencontainers.image.source=https://github.com/ba0f3/haproxy-waf-spoe'
+      - '--label=org.opencontainers.image.version={{ .Version }}'
+      - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
