@@ -1,4 +1,6 @@
 HAPROXY_SERIES ?= 3.2
+FUZZ_TIME ?= 15s
+FUZZ_WORKERS ?= 2
 COMPOSE_FILE := integration/compose.yaml
 export COMPOSE_PROJECT_NAME ?= integration
 
@@ -18,6 +20,13 @@ race:
 
 test:
 	go test ./... -count=1
+
+.PHONY: fuzz
+fuzz:
+	go test ./internal/spoa -run '^$$' -fuzz '^FuzzDecodeSPOE$$' -fuzztime=$(FUZZ_TIME) -parallel=$(FUZZ_WORKERS)
+	go test ./internal/spoa -run '^$$' -fuzz '^FuzzSPOEOperationLabel$$' -fuzztime=$(FUZZ_TIME) -parallel=$(FUZZ_WORKERS)
+	go test ./internal/admin -run '^$$' -fuzz '^FuzzAdminPolicyRequest$$' -fuzztime=$(FUZZ_TIME) -parallel=$(FUZZ_WORKERS)
+	go test ./internal/enrich -run '^$$' -fuzz '^FuzzParseCorazaLog$$' -fuzztime=$(FUZZ_TIME) -parallel=$(FUZZ_WORKERS)
 
 COMPOSE_FILES := -f integration/compose.yaml
 ifneq ($(HAPROXY_SERIES),3.2)

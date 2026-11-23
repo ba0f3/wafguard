@@ -11,17 +11,19 @@ import (
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 )
 
-func parseAddrValue(val string) (netip.Addr, error) {
-	val = strings.TrimSpace(val)
-	if len(val) == 4 {
-		return netip.AddrFrom4([4]byte{val[0], val[1], val[2], val[3]}), nil
+func parseAddrValue(kv *encoding.KVEntry) (netip.Addr, error) {
+	switch kv.Type() {
+	case encoding.DataTypeIPV4, encoding.DataTypeIPV6:
+		if addr, ok := netip.AddrFromSlice(kv.ValueBytes()); ok {
+			return addr, nil
+		}
+	case encoding.DataTypeString:
+		addr, err := netip.ParseAddr(strings.TrimSpace(string(kv.ValueBytes())))
+		if err == nil && addr.Zone() == "" {
+			return addr, nil
+		}
 	}
-	if len(val) == 16 {
-		var b [16]byte
-		copy(b[:], val)
-		return netip.AddrFrom16(b), nil
-	}
-	return netip.ParseAddr(val)
+	return netip.Addr{}, fmt.Errorf("invalid IP address")
 }
 
 func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event.Event, event.InvalidReason, error) {
@@ -65,13 +67,13 @@ func decodeMessage(name string, m *encoding.Message, limits event.Limits) (event
 		case "route_group":
 			ev.Request.RouteGroup = val
 		case "client_ip":
-			addr, err := parseAddrValue(val)
+			addr, err := parseAddrValue(kv)
 			if err != nil {
 				return ev, event.InvalidForwardingIP, err
 			}
 			ev.Request.ClientIP = addr.Unmap()
 		case "peer_ip":
-			addr, err := parseAddrValue(val)
+			addr, err := parseAddrValue(kv)
 			if err != nil {
 				return ev, event.InvalidForwardingIP, err
 			}
@@ -259,4 +261,3 @@ func writeObserveACK(w *encoding.ActionWriter, degraded bool) error {
 	}
 	return nil
 }
-

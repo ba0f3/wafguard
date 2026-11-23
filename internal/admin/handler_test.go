@@ -14,10 +14,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func testStore(t *testing.T) *state.Store {
+func testStore(t testing.TB) *state.Store {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
 	store, err := state.New(client, state.Config{
 		Namespace:   "adm",
 		DefaultMode: event.ModeObserve,

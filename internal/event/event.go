@@ -194,7 +194,7 @@ func Validate(limits Limits, ev Event) (InvalidReason, bool) {
 	if maxPath == 0 {
 		maxPath = 1024
 	}
-	if len(ev.Request.Path) > maxPath {
+	if len(ev.Request.Path) > maxPath || HasControlChar(ev.Request.Path) {
 		return InvalidControlChar, false
 	}
 	for _, field := range []string{ev.Request.Application, ev.Request.Backend, ev.Request.Method, ev.Request.NodeID, ev.Request.RouteGroup} {

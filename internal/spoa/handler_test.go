@@ -2,6 +2,7 @@ package spoa
 
 import (
 	"context"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -123,18 +124,21 @@ func TestWireV1Decode(t *testing.T) {
 		"backend":              "origin",
 		"method":               "GET",
 		"client_ip":            "192.0.2.8",
-		"peer_ip":              "192.0.2.1",
 		"admission_generation": "g1",
 		"admission_at_ms":      "1700000000000",
 		"behavior_mode":        "observe",
 		"path":                 "/ok",
-	})
+	}, func(w *encoding.KVWriter) error { return w.SetAddr("peer_ip", netip.MustParseAddr("32.0.2.32")) })
+	defer encoding.ReleaseMessage(m)
 	ev, _, err := decodeMessage("waf-verdict", m, limits)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ev.Request.ClientIP.String() != "192.0.2.8" {
 		t.Fatal(ev.Request.ClientIP)
+	}
+	if ev.Request.PeerIP.String() != "32.0.2.32" {
+		t.Fatal(ev.Request.PeerIP)
 	}
 }
 

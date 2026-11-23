@@ -6,7 +6,7 @@ import (
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 )
 
-func mustMessage(t *testing.T, name string, kvs map[string]string) *encoding.Message {
+func mustMessage(t *testing.T, name string, kvs map[string]string, extra ...func(*encoding.KVWriter) error) *encoding.Message {
 	t.Helper()
 	var header []byte
 	varintBuf := make([]byte, 10)
@@ -16,13 +16,18 @@ func mustMessage(t *testing.T, name string, kvs map[string]string) *encoding.Mes
 	}
 	header = append(header, varintBuf[:vn]...)
 	header = append(header, name...)
-	header = append(header, byte(len(kvs)))
+	header = append(header, byte(len(kvs)+len(extra)))
 
 	buf := make([]byte, len(header)+8192)
 	copy(buf, header)
 	w := encoding.NewKVWriter(buf, len(header))
 	for k, v := range kvs {
 		if err := w.SetString(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, write := range extra {
+		if err := write(w); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -37,4 +42,3 @@ func mustMessage(t *testing.T, name string, kvs map[string]string) *encoding.Mes
 	}
 	return m
 }
-

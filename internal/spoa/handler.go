@@ -73,9 +73,13 @@ func (h *Handler) WithMaxInflight(n int) *Handler {
 func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *encoding.Message) {
 	start := time.Now()
 	name := string(m.NameBytes())
+	operation := "unknown"
+	if _, known := event.PhaseForKind(event.Kind(name)); known {
+		operation = name
+	}
 	result := "ok"
 	defer func() {
-		h.Telemetry.RecordOperation(name, result, time.Since(start))
+		h.Telemetry.RecordOperation(operation, result, time.Since(start))
 	}()
 
 	select {

@@ -27,11 +27,11 @@ type Match struct {
 }
 
 type stockLog struct {
-	UniqueID string `json:"unique_id"`
-	RuleID   uint32 `json:"ruleid"`
+	UniqueID string   `json:"unique_id"`
+	RuleID   uint32   `json:"ruleid"`
 	Tags     []string `json:"tags"`
-	Severity int    `json:"severity"`
-	Phase    int    `json:"phase"`
+	Severity int      `json:"severity"`
+	Phase    int      `json:"phase"`
 }
 
 type stockMatch struct {
@@ -56,12 +56,11 @@ func Parse(r io.Reader, source Source, limits Limits) (Match, error) {
 	if limits.MaxTagLen == 0 {
 		limits.MaxTagLen = 128
 	}
-	buf := make([]byte, limits.MaxLineBytes+1)
-	n, err := r.Read(buf)
-	if err != nil && err != io.EOF {
+	buf, err := io.ReadAll(io.LimitReader(r, int64(limits.MaxLineBytes)+1))
+	if err != nil {
 		return Match{}, err
 	}
-	if n > limits.MaxLineBytes {
+	if len(buf) > limits.MaxLineBytes {
 		return Match{}, fmt.Errorf("line too long")
 	}
 	var m stockMatch
@@ -69,7 +68,7 @@ func Parse(r io.Reader, source Source, limits Limits) (Match, error) {
 	var sev, phase int
 
 	var wrap zerologLine
-	if err := json.Unmarshal(buf[:n], &wrap); err == nil && len(wrap.Match) > 0 {
+	if err := json.Unmarshal(buf, &wrap); err == nil && len(wrap.Match) > 0 {
 		if err := json.Unmarshal(wrap.Match, &m); err != nil {
 			return Match{}, err
 		}
@@ -78,7 +77,7 @@ func Parse(r io.Reader, source Source, limits Limits) (Match, error) {
 		phase = m.PhaseID
 	} else {
 		var row stockLog
-		if err := json.Unmarshal(buf[:n], &row); err != nil {
+		if err := json.Unmarshal(buf, &row); err != nil {
 			return Match{}, err
 		}
 		m.UniqueID = row.UniqueID

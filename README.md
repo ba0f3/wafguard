@@ -23,5 +23,9 @@ make test
 make race
 ```
 
+Run `make fuzz` to exercise SPOE event decoding, metrics labels, admin policy requests, and Coraza log parsing with Go's native fuzzer. The default is 15 seconds per target with two workers. For a longer run, use `make fuzz FUZZ_TIME=5m FUZZ_WORKERS=4`. The seed cases also run under `make test`. The fuzzer runs in process and uses miniredis for the admin tests.
+
+The admin API accepts one JSON document per mutation request, up to 64 KiB. Requests over the limit return HTTP `413`.
+
 Design: [docs/specs/2026-11-23-haproxy-waf-spoe-design.md](docs/specs/2026-11-23-haproxy-waf-spoe-design.md)
 

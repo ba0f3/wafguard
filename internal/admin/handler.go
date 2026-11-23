@@ -2,6 +2,8 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -50,8 +52,7 @@ func New(store *state.Store, access Access) http.Handler {
 				Mode             event.Mode    `json:"mode"`
 				Config           policy.Config `json:"config"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
+			if !decodeBody(w, r, &body) {
 				return
 			}
 			if r.URL.Query().Get("dry_run") == "1" {
@@ -87,8 +88,7 @@ func New(store *state.Store, access Access) http.Handler {
 				OperationID string `json:"operation_id"`
 				Reason      string `json:"reason"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
+			if !decodeBody(w, r, &body) {
 				return
 			}
 			ip, err := netip.ParseAddr(body.ClientIP)
@@ -114,8 +114,7 @@ func New(store *state.Store, access Access) http.Handler {
 				return
 			}
 			var rcpt policy.AuthReceipt
-			if err := json.NewDecoder(r.Body).Decode(&rcpt); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
+			if !decodeBody(w, r, &rcpt) {
 				return
 			}
 			rcpt.Application = app
@@ -150,3 +149,18 @@ func New(store *state.Store, access Access) http.Handler {
 	return mux
 }
 
+const maxBodyBytes = 64 << 10
+
+func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return false
+	}
+	if err != nil || json.Unmarshal(body, dst) != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
