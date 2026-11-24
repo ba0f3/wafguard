@@ -7,6 +7,21 @@ import (
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
 )
 
+func TestPathMatchesPrefixes(t *testing.T) {
+	if !policy.PathMatches("/api/v1/users", []string{"/api/"}) {
+		t.Fatal("prefix match failed")
+	}
+	if policy.PathMatches("/other", []string{"/api/"}) {
+		t.Fatal("unrelated path matched")
+	}
+	if policy.PathMatches("/api/v1", nil) {
+		t.Fatal("empty prefix list must not match")
+	}
+	if !policy.PathMatches("/api", []string{"/api"}) {
+		t.Fatal("exact prefix must match")
+	}
+}
+
 func TestClassify(t *testing.T) {
 	cfg := policy.DefaultConfig()
 	ev := event.Event{

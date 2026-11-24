@@ -78,6 +78,7 @@ Configuration is one JSON document — start from `deploy/wafguard.example.json`
 | `limits.max_inflight` | Cap on concurrent SPOE requests. |
 | `limits.allowed_apps` | Allowlist of application names accepted from HAProxy. |
 | `apps.<name>` | Per-app `waf_deny_window_sec`, `waf_deny_threshold`, `waf_deny_ban_sec`, `max_event_age_sec`, `admission_ttl`. |
+| `apps.<name>.req_inspect_paths` / `res_inspect_paths` / `observe_response_paths` | Central prefix lists (HAProxy `path -m beg` semantics). wafguard returns the matching inspection flags in the `check-ban` ACK, so no per-server path files or HAProxy reload are needed. Empty means disabled. |
 | `admin_http_write` | Admin listener for `PUT .../policy` and `POST .../unban`; keep on loopback. |
 | `admin_http_auth` | Auth-outcome ingress; optional `admin_http_auth_source` (default `http-auth`) and `admin_http_auth_token` (header `X-Wafguard-Auth-Token`). |
 | `admin_read_socket`, `admin_write_socket` | Unix-socket admin listeners (read-only / write). |

@@ -41,6 +41,21 @@ type Config struct {
 	AdmissionTTL       int      `json:"admission_ttl"`
 	ProbePaths         []string `json:"probe_paths"`
 	SlowScannerEnabled bool     `json:"slow_scanner_enabled"`
+
+	ReqInspectPaths      []string `json:"req_inspect_paths,omitempty"`
+	ResInspectPaths      []string `json:"res_inspect_paths,omitempty"`
+	ObserveResponsePaths []string `json:"observe_response_paths,omitempty"`
+}
+
+// PathMatches implements HAProxy's `path -m beg` semantics for centrally
+// configured inspection prefixes.
+func PathMatches(path string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 type Evidence struct {

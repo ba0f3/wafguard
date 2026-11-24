@@ -18,7 +18,7 @@ AUTH="http://127.0.0.1:${OPERATOR_AUTH_PORT:-29201}"
 WRITE="http://127.0.0.1:${OPERATOR_WRITE_PORT:-29200}"
 AUTH_TOKEN="fixture-only-auth-token"
 WRITE_TOKEN="fixture-only-write-token"
-POLICY_CFG='{"waf_deny_window_sec":30,"waf_deny_threshold":3,"waf_deny_ban_sec":900,"brute_window_sec":60,"brute_failures":10,"max_event_age_sec":120,"admission_ttl":120}'
+POLICY_CFG='{"waf_deny_window_sec":30,"waf_deny_threshold":3,"waf_deny_ban_sec":900,"brute_window_sec":60,"brute_failures":10,"max_event_age_sec":120,"admission_ttl":120,"req_inspect_paths":["/body-inspect"],"res_inspect_paths":["/missing-txn","/status-observe","/marker-response-body"],"observe_response_paths":["/status-observe"]}'
 
 TMP_FIX="$(mktemp -d)"
 TMP_MISSING="$(mktemp -d)"
@@ -93,9 +93,8 @@ cp -R "$ROOT/deploy/operator/haproxy/." "$TMP_FIX/"
 # A request-phase flag is used by the missing-transaction overlay because the
 # `path` sample is not reliably available in the response phase.
 sed -i 's|^    http-request set-var(txn.wafguard.request_id) uuid(4)|    http-request set-var(txn.wafguard.request_id) uuid(4)\n    http-request set-var(txn.wafguard.missing_txn) str(1) if { path -m str /missing-txn }|' "$TMP_FIX/haproxy.cfg"
-printf '/body-inspect\n' >> "$TMP_FIX/req-inspect-paths.lst"
-printf '/missing-txn\n/status-observe\n/marker-response-body\n' >> "$TMP_FIX/res-inspect-paths.lst"
-printf '/status-observe\n' >> "$TMP_FIX/observe-response-paths.lst"
+# Inspection prefixes are configured centrally in Redis via POLICY_CFG above;
+# no per-HAProxy path files are needed.
 cp -R "$TMP_FIX/." "$TMP_MISSING/"
 # Isolated overlay: hand Coraza a transaction id it never saw at request phase.
 # Upstream coraza-spoa reports this as txn.coraza.error >= 1000.

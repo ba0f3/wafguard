@@ -270,6 +270,13 @@ func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, e
 	if action == event.ActionBan {
 		d.Action = event.ActionBan
 	}
+	cfg, err := s.appCfgAt(ctx, app, rev)
+	if err != nil {
+		return event.UnknownDecision(true), err
+	}
+	d.ReqInspect = policy.PathMatches(req.Path, cfg.ReqInspectPaths)
+	d.ResInspect = policy.PathMatches(req.Path, cfg.ResInspectPaths)
+	d.ObserveResponse = policy.PathMatches(req.Path, cfg.ObserveResponsePaths)
 	if len(row) > 5 {
 		switch fmt.Sprint(row[5]) {
 		case "suppressed":

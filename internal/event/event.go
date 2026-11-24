@@ -98,6 +98,10 @@ type Decision struct {
 	ExpiresAt   time.Time
 	Degraded    bool
 	Explanation string
+
+	ReqInspect      bool
+	ResInspect      bool
+	ObserveResponse bool
 }
 
 type Limits struct {

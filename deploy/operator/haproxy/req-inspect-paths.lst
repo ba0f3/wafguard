@@ -1,2 +1,0 @@
-# Opt-in request-body waiting. Empty by default: add one path prefix per line
-# to wait up to 500 ms for the request body before Coraza inspects it.

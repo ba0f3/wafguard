@@ -145,6 +145,41 @@ func TestObserveLogsShadowBanCandidate(t *testing.T) {
 	}
 }
 
+func TestCheckSetsInspectionFlagsFromConfig(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "pathflags",
+		DefaultMode: event.ModeEnforce,
+		Apps: map[string]policy.Config{"sample_app": {
+			ReqInspectPaths:      []string{"/upload"},
+			ResInspectPaths:      []string{"/api/"},
+			ObserveResponsePaths: []string{"/"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := store.Check(context.Background(), event.Request{
+		Application: "sample_app",
+		ClientIP:    netip.MustParseAddr("192.0.2.40"),
+		RequestID:   "550e8400-e29b-41d4-a716-446655440080",
+		Path:        "/api/v1/items",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ReqInspect {
+		t.Fatal("/api/v1/items must not match req_inspect_paths")
+	}
+	if !d.ResInspect {
+		t.Fatal("/api/v1/items must match res_inspect_paths")
+	}
+	if !d.ObserveResponse {
+		t.Fatal("observe_response_paths=/ must match every path")
+	}
+}
+
 func TestObserveLogsBackendStatusSignals(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

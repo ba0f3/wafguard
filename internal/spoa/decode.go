@@ -272,6 +272,20 @@ func writeAdmissionACK(w *encoding.ActionWriter, d event.Decision) error {
 			return err
 		}
 	}
+	for _, flag := range []struct {
+		name    string
+		enabled bool
+	}{
+		{"req_insp", d.ReqInspect},
+		{"res_insp", d.ResInspect},
+		{"observe_response", d.ObserveResponse},
+	} {
+		if flag.enabled {
+			if err := w.SetString(encoding.VarScopeTransaction, flag.name, "1"); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

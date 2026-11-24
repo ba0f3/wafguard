@@ -119,6 +119,25 @@ func TestHandleSPOELogsObserveErrorDetail(t *testing.T) {
 	}
 }
 
+func TestWriteAdmissionACKSetsInspectionVars(t *testing.T) {
+	w := encoding.NewActionWriter(nil, 0)
+	err := writeAdmissionACK(w, event.Decision{
+		Action:          event.ActionAllow,
+		ReqInspect:      true,
+		ResInspect:      true,
+		ObserveResponse: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(w.Bytes())
+	for _, want := range []string{"req_insp", "res_insp", "observe_response"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ACK missing var %q; got %q", want, out)
+		}
+	}
+}
+
 func TestHandleSPOELogsFailureAtInfo(t *testing.T) {
 	logging.SetLevel(logging.LevelInfo)
 	t.Cleanup(func() { logging.SetLevel(logging.LevelInfo) })

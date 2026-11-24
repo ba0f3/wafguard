@@ -37,9 +37,9 @@ Edit **`$OPERATOR_HAPROXY_DIR/haproxy.cfg`** `backend origin`:
 
 ### Bounded inspection and response observation
 
-- `$OPERATOR_HAPROXY_DIR/res-inspect-paths.lst`: response body inspection, `http-response wait-for-body time 500`.
-- `$OPERATOR_HAPROXY_DIR/req-inspect-paths.lst`: **request** body waiting after check-ban and before Coraza, also capped at 500 ms. Empty list disables it.
-- `$OPERATOR_HAPROXY_DIR/observe-response-paths.lst`: **opt-in** response-status observation. When no path is listed, HAProxy never sends the synchronous `observe-response` group. Status is stored in Redis meta (`origin_status`, `response_seen`) and is never re-counted as a second WAF denial.
+- Inspection path lists are **central**: set `req_inspect_paths`, `res_inspect_paths` and `observe_response_paths` in the app config via admin `PUT /v1/apps/{app}/policy`. wafguard prefix-matches each request path and returns `txn.wafguard.req_insp` / `res_insp` / `observe_response` in the `check-ban` ACK. No per-HAProxy path files exist, and changes need no HAProxy reload.
+- `res_inspect_paths` enables response body inspection (`http-response wait-for-body time 500`); `req_inspect_paths` enables request-body waiting after check-ban, also capped at 500 ms. Empty lists disable both.
+- `observe_response_paths` enables response-status observation. With no matching prefix, HAProxy never sends the synchronous `observe-response` group. Status is stored in Redis meta (`origin_status`, `response_seen`) and is never re-counted as a second WAF denial.
 - Response-phase Coraza verdicts are reset before inspection; a transport error or stock Coraza's missing-transaction signal (`txn.coraza.error` >= 1000) fails closed with `waf-block: response-error`. A successful ACK sets no error var, so clean responses are allowed. The second Coraza replica is a hot standby: phase-4 response inspection requires the request and response SPOE groups to reach the same agent.
 
 ### Start / validate
