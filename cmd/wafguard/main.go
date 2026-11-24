@@ -258,7 +258,16 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 		go enrich.TailJSONL(ctx, fc.EnrichLogFile, src, lim, store.Enrich)
 	}
 	<-ctx.Done()
-	return l.Close()
+	return closeListener(l)
+}
+
+// spop.Agent.Serve closes the listener on context cancellation too, so a
+// second close from run() is expected and must not fail shutdown.
+func closeListener(l net.Listener) error {
+	if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
 }
 
 func serveUnix(path string, h http.Handler) {

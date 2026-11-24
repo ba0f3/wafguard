@@ -49,6 +49,21 @@ func TestFailoverAuthOptions(t *testing.T) {
 	}
 }
 
+func TestCloseListenerIgnoresDoubleClose(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closeListener(ln); err != nil {
+		t.Fatal(err)
+	}
+	// spop.Agent.Serve closes the same listener when the context is cancelled,
+	// so run() may close it a second time. That must not become a fatal error.
+	if err := closeListener(ln); err != nil {
+		t.Fatalf("second close returned %v", err)
+	}
+}
+
 func TestRunLogsStartupListenersAndRedis(t *testing.T) {
 	mr := miniredis.RunT(t)
 	cfg, err := loadConfig(strings.NewReader(`{"version":1,"spop_listen":"127.0.0.1:0","metrics_listen":"127.0.0.1:0","redis":{"addr":"` + mr.Addr() + `"},"limits":{"allowed_apps":["sample_app"]}}`))
