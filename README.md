@@ -82,6 +82,7 @@ Configuration is one JSON document — start from `deploy/wafguard.example.json`
 | `admin_http_auth` | Auth-outcome ingress; optional `admin_http_auth_source` (default `http-auth`) and `admin_http_auth_token` (header `X-Wafguard-Auth-Token`). |
 | `admin_read_socket`, `admin_write_socket` | Unix-socket admin listeners (read-only / write). |
 | `enrich_log_file`, `enrich_application` | Optional tailing of Coraza JSON logs for enrichment. |
+| `log_level` | `info` (default) or `debug`. Info logs startup, counter changes, bans and SPOE errors; debug also logs every `check-ban` / `waf-verdict` line. |
 
 For a password-protected Redis or Sentinel, see
 [docs/examples/redis-sentinel-acl.md](docs/examples/redis-sentinel-acl.md) for
@@ -107,7 +108,8 @@ Reasons: `waf_deny` (Coraza deny), `brute_auth` (failed auth receipt),
 `brute_401` (origin returned 401), `scanner_404` (origin returned 404). Origin
 500–504 produce `backend_5xx ... status=<code>` and **never** ban — they are a
 backend fault. Crossing a threshold logs `ban issued ... reason=<reason>` in
-enforce mode, or `ban would fire ...` in observe mode.
+enforce mode, or `ban would fire ...` in observe mode. All of these are at
+`info`; the per-request `spoe ...` line (including `action=allow`) is `debug`.
 
 ## Configure HAProxy
 

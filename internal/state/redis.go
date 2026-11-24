@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/enrich"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/logging"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
 	"github.com/redis/go-redis/v9"
 )
@@ -339,6 +339,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		if len(row) > 1 {
 			banReason = fmt.Sprint(row[1])
 		}
+		banCount, banThreshold := "-", "-"
 		for _, item := range row[2:] {
 			sig, ok := item.([]interface{})
 			if !ok || len(sig) < 3 {
@@ -348,20 +349,23 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 			count := fmt.Sprint(sig[1])
 			threshold := fmt.Sprint(sig[2])
 			if reason == "backend_5xx" {
-				log.Printf("backend_5xx app=%s request_id=%s client_ip=%s status=%s",
+				logging.Infof("backend_5xx app=%s request_id=%s client_ip=%s status=%s",
 					app, ev.Request.RequestID, ev.Request.ClientIP, count)
 				continue
 			}
-			log.Printf("counter +1 app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
+			logging.Infof("counter +1 app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
 				app, ev.Request.RequestID, ev.Request.ClientIP, reason, count, threshold)
+			if reason == banReason {
+				banCount, banThreshold = count, threshold
+			}
 		}
 		switch status {
 		case "banned":
-			log.Printf("ban issued app=%s request_id=%s client_ip=%s reason=%s",
-				app, ev.Request.RequestID, ev.Request.ClientIP, banReason)
+			logging.Infof("ban issued app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
+				app, ev.Request.RequestID, ev.Request.ClientIP, banReason, banCount, banThreshold)
 		case "shadow":
-			log.Printf("ban would fire app=%s request_id=%s client_ip=%s reason=%s mode=observe",
-				app, ev.Request.RequestID, ev.Request.ClientIP, banReason)
+			logging.Infof("ban would fire app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s mode=observe",
+				app, ev.Request.RequestID, ev.Request.ClientIP, banReason, banCount, banThreshold)
 		}
 	}
 	return nil

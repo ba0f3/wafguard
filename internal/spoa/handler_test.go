@@ -12,10 +12,18 @@ import (
 	"time"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/logging"
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 )
 
+func enableDebugLogs(t *testing.T) {
+	t.Helper()
+	logging.SetLevel(logging.LevelDebug)
+	t.Cleanup(func() { logging.SetLevel(logging.LevelInfo) })
+}
+
 func TestHandleSPOELogsRequest(t *testing.T) {
+	enableDebugLogs(t)
 	h := NewHandler(&fakeBackend{}, event.Limits{AllowedApps: map[string]struct{}{"sample_app": {}}})
 	m := mustMessage(t, "check-ban", map[string]string{
 		"schema_version": "1",
@@ -80,6 +88,7 @@ func (f *fakeBackend) Observe(ctx context.Context, ev event.Event) error {
 }
 
 func TestHandleSPOELogsObserveErrorDetail(t *testing.T) {
+	enableDebugLogs(t)
 	h := NewHandler(&fakeBackend{observeErr: errors.New("policy config missing for revision 3")}, event.Limits{
 		AllowedApps:    map[string]struct{}{"sample_app": {}},
 		MaxPathLen:     1024,
@@ -107,6 +116,29 @@ func TestHandleSPOELogsObserveErrorDetail(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("observe error log missing %q; got %q", want, out)
 		}
+	}
+}
+
+func TestHandleSPOELogsFailureAtInfo(t *testing.T) {
+	logging.SetLevel(logging.LevelInfo)
+	t.Cleanup(func() { logging.SetLevel(logging.LevelInfo) })
+	h := NewHandler(&fakeBackend{}, event.Limits{AllowedApps: map[string]struct{}{"sample_app": {}}}).WithMaxInflight(1)
+	h.sem <- struct{}{}
+	m := mustMessage(t, "check-ban", map[string]string{
+		"schema_version": "1",
+		"request_id":     "550e8400-e29b-41d4-a716-446655440099",
+		"app":            "sample_app",
+		"client_ip":      "192.0.2.8",
+		"peer_ip":        "192.0.2.1",
+		"path":           "/ok",
+	})
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	h.HandleSPOE(context.Background(), &encoding.ActionWriter{}, m)
+	if out := buf.String(); !strings.Contains(out, "result=overload") {
+		t.Fatalf("non-ok SPOE result must be logged at info; got %q", out)
 	}
 }
 

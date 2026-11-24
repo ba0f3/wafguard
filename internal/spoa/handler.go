@@ -2,10 +2,10 @@ package spoa
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/logging"
 	"github.com/dropmorepackets/haproxy-go/pkg/encoding"
 )
 
@@ -89,8 +89,12 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		if action == "" {
 			action = "-"
 		}
-		log.Printf("spoe kind=%s app=%s request_id=%s client_ip=%s action=%s reason=%s result=%s duration_ms=%d",
-			name, ev.Request.Application, ev.Request.RequestID, ev.Request.ClientIP, action, why, result, d.Milliseconds())
+		args := []any{name, ev.Request.Application, ev.Request.RequestID, ev.Request.ClientIP, action, why, result, d.Milliseconds()}
+		const format = "spoe kind=%s app=%s request_id=%s client_ip=%s action=%s reason=%s result=%s duration_ms=%d"
+		logging.Debugf(format, args...)
+		if result != "ok" {
+			logging.Infof(format, args...)
+		}
 	}()
 
 	select {
