@@ -156,6 +156,26 @@ func newRedisClient(ro redisOptions) redis.UniversalClient {
 	return redis.NewClient(newRedisOptions(ro))
 }
 
+func initStoreWithRetry(ctx context.Context, attempts int, delay time.Duration, open func() (*state.Store, error)) (*state.Store, error) {
+	var err error
+	for i := 0; i < attempts; i++ {
+		var store *state.Store
+		store, err = open()
+		if err == nil {
+			return store, nil
+		}
+		logging.Infof("redis init attempt %d/%d failed: %v", i+1, attempts, err)
+		if i+1 < attempts {
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return nil, err
+}
+
 func run(ctx context.Context, cfg runtimeConfig) error {
 	fc := cfg.file
 	logging.SetLevel(logging.ParseLevel(fc.LogLevel))
@@ -181,13 +201,15 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	} else {
 		logging.Infof("redis ok target=%s", redisTarget)
 	}
-	store, err := state.New(client, state.Config{
-		Namespace:       "wg",
-		DefaultMode:     mode,
-		Apps:            fc.Apps,
-		AuthSource:      authSource,
-		AuthApplication: fc.AdminHTTPAuthApplication,
-		AdmissionTTL:    time.Duration(fc.AdmissionTTLSeconds) * time.Second,
+	store, err := initStoreWithRetry(context.Background(), 8, 500*time.Millisecond, func() (*state.Store, error) {
+		return state.New(client, state.Config{
+			Namespace:       "wg",
+			DefaultMode:     mode,
+			Apps:            fc.Apps,
+			AuthSource:      authSource,
+			AuthApplication: fc.AdminHTTPAuthApplication,
+			AdmissionTTL:    time.Duration(fc.AdmissionTTLSeconds) * time.Second,
+		})
 	})
 	if err != nil {
 		return err

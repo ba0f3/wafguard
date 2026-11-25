@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -12,8 +13,37 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/state"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestInitStoreRetriesTransientFailure(t *testing.T) {
+	attempts := 0
+	store, err := initStoreWithRetry(context.Background(), 3, time.Millisecond, func() (*state.Store, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("redis not ready")
+		}
+		return &state.Store{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store == nil || attempts != 3 {
+		t.Fatalf("store=%v attempts=%d", store, attempts)
+	}
+}
+
+func TestInitStoreStopsAfterAttempts(t *testing.T) {
+	attempts := 0
+	_, err := initStoreWithRetry(context.Background(), 2, time.Millisecond, func() (*state.Store, error) {
+		attempts++
+		return nil, errors.New("still down")
+	})
+	if err == nil || attempts != 2 {
+		t.Fatalf("err=%v attempts=%d", err, attempts)
+	}
+}
 
 func TestRedisAuthOptions(t *testing.T) {
 	opt := newRedisOptions(redisOptions{Addr: "redis:6379", Username: "wg", Password: "master-secret", DB: 3})
