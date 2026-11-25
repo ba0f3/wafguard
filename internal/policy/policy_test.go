@@ -27,6 +27,19 @@ func TestIPInList(t *testing.T) {
 	}
 }
 
+func TestRepeatBanDefaults(t *testing.T) {
+	cfg := policy.WithDefaults(policy.Config{})
+	if cfg.RepeatBanThreshold != 2 {
+		t.Fatalf("threshold = %d, want 2", cfg.RepeatBanThreshold)
+	}
+	if cfg.RepeatBanWindowSec != 604800 {
+		t.Fatalf("window = %d, want 604800", cfg.RepeatBanWindowSec)
+	}
+	if cfg.RepeatBanTTLSec != 2592000 {
+		t.Fatalf("ttl = %d, want 2592000", cfg.RepeatBanTTLSec)
+	}
+}
+
 func TestPathMatchesPrefixes(t *testing.T) {
 	if !policy.PathMatches("/api/v1/users", []string{"/api/"}) {
 		t.Fatal("prefix match failed")

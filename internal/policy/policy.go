@@ -46,6 +46,10 @@ type Config struct {
 	ResInspectPaths      []string `json:"res_inspect_paths,omitempty"`
 	ObserveResponsePaths []string `json:"observe_response_paths,omitempty"`
 	WhitelistIPs         []string `json:"whitelist_ips,omitempty"`
+
+	RepeatBanThreshold int `json:"repeat_ban_threshold,omitempty"`
+	RepeatBanWindowSec int `json:"repeat_ban_window_sec,omitempty"`
+	RepeatBanTTLSec    int `json:"repeat_ban_ttl_sec,omitempty"`
 }
 
 // IPInList reports whether ip matches any IP or CIDR entry. Invalid entries are
@@ -101,7 +105,10 @@ func DefaultConfig() Config {
 		OutageUniqueIPs:  5,
 		MaxEventAgeSec:   120,
 		AdmissionTTL:     120,
-		ProbePaths:       []string{"/.env", "/wp-admin", "/.git"},
+		ProbePaths:          []string{"/.env", "/wp-admin", "/.git"},
+		RepeatBanThreshold: 2,
+		RepeatBanWindowSec: 604800,
+		RepeatBanTTLSec:    2592000,
 	}
 }
 
@@ -152,6 +159,15 @@ func WithDefaults(cfg Config) Config {
 	if len(cfg.ProbePaths) == 0 {
 		cfg.ProbePaths = d.ProbePaths
 	}
+	if cfg.RepeatBanThreshold <= 0 {
+		cfg.RepeatBanThreshold = d.RepeatBanThreshold
+	}
+	if cfg.RepeatBanWindowSec <= 0 {
+		cfg.RepeatBanWindowSec = d.RepeatBanWindowSec
+	}
+	if cfg.RepeatBanTTLSec <= 0 {
+		cfg.RepeatBanTTLSec = d.RepeatBanTTLSec
+	}
 	return cfg
 }
 
@@ -164,6 +180,9 @@ func Validate(cfg Config) error {
 	}
 	if cfg.MaxEventAgeSec < cfg.AdmissionTTL {
 		return fmt.Errorf("max_event_age must be >= admission TTL")
+	}
+	if cfg.RepeatBanThreshold < 1 || cfg.RepeatBanWindowSec < 1 || cfg.RepeatBanTTLSec < cfg.WAFDenyBanSec {
+		return fmt.Errorf("repeat ban threshold/window must be >= 1 and ttl >= waf_deny_ban_sec")
 	}
 	return nil
 }

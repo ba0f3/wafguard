@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
@@ -195,6 +196,58 @@ func TestWhitelistedIPSkipsBanAndCounters(t *testing.T) {
 	}
 	if d2.Action == event.ActionBan {
 		t.Fatal("whitelisted IP was banned")
+	}
+}
+
+func TestRepeatBanEscalatesTTL(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "repeat",
+		DefaultMode: event.ModeEnforce,
+		Apps: map[string]policy.Config{"sample_app": {
+			WAFDenyWindowSec: 30, WAFDenyThreshold: 1, WAFDenyBanSec: 900,
+			MaxEventAgeSec: 120, AdmissionTTL: 120,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ip := netip.MustParseAddr("192.0.2.60")
+	key := "repeat:ban:sample_app:" + ip.String()
+	ban := func(rid string) time.Duration {
+		t.Helper()
+		req := event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid}
+		d, err := store.Check(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev := event.Event{
+			Request: req, ID: event.EventID("sample_app", rid, event.KindWafVerdict),
+			Kind: event.KindWafVerdict, Phase: event.PhaseRequest,
+			Admission: d.Admission, RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
+		}
+		if err := store.Observe(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+		return mr.TTL(key)
+	}
+	first := ban("550e8400-e29b-41d4-a716-446655440091")
+	if first < 800*time.Second || first > 900*time.Second {
+		t.Fatalf("first ban TTL = %v, want ~900s", first)
+	}
+	_ = mr.Del(key) // unban; history must survive
+	second := ban("550e8400-e29b-41d4-a716-446655440092")
+	if second < 2591000*time.Second {
+		t.Fatalf("repeat ban TTL = %v, want ~30 days", second)
+	}
+	bans, err := store.BannedIPs(ctx, "sample_app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bans) != 1 || bans[0].Reason != "waf_deny" || bans[0].BanCount < 2 {
+		t.Fatalf("ban info = %+v", bans)
 	}
 }
 

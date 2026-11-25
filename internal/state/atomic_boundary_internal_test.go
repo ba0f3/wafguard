@@ -118,12 +118,14 @@ func TestObserveRejectsTokenAndRevisionMismatch(t *testing.T) {
 			store.modeKey("sample_app"), store.fenceKey("sample_app"),
 			store.authKey("sample_app", boundaryRID), store.bruteKey("sample_app", ip),
 			store.admissionKey("sample_app", boundaryRID), store.policyRevKey("sample_app"),
-			store.supKey("sample_app", ip),
+			store.supKey("sample_app", ip), store.scannerKey("sample_app", ip),
+			store.banHistoryKey("sample_app", ip), store.banInfoKey("sample_app", ip),
 		}
 		res, err := store.observeScript.Run(ctx, client, keys,
 			eventID, time.Now().UnixMilli(), 1, 30, 1, 900, "enforce", "",
 			120000, d.Admission.At.UnixMilli(), 60, 2, boundaryRID,
 			"sample_app", expectedIP, "", "", expectedRev,
+			60, 30, 2, 604800, 2592000,
 		).Result()
 		if err != nil {
 			t.Fatal(err)

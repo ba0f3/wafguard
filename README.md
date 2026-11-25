@@ -80,6 +80,7 @@ Configuration is one JSON document — start from `deploy/wafguard.example.json`
 | `apps.<name>` | Per-app `waf_deny_window_sec`, `waf_deny_threshold`, `waf_deny_ban_sec`, `max_event_age_sec`, `admission_ttl`. |
 | `apps.<name>.req_inspect_paths` / `res_inspect_paths` / `observe_response_paths` | Central prefix lists (HAProxy `path -m beg` semantics). wafguard returns the matching inspection flags in the `check-ban` ACK, so no per-server path files or HAProxy reload are needed. Empty means disabled. |
 | `apps.<name>.whitelist_ips` | IP or CIDR entries that are never banned and never counted. Coraza still inspects them at HAProxy. |
+| `apps.<name>.repeat_ban_threshold` / `repeat_ban_window_sec` / `repeat_ban_ttl_sec` | Repeat-offender escalation: the 2nd ban inside 7 days becomes a 30-day ban (defaults `2` / `604800` / `2592000`). Unban clears the ban but keeps the history. |
 | `admin_http_write` | Admin listener for `PUT .../policy` and `POST .../unban`; keep on loopback. |
 | `admin_http_auth` | Auth-outcome ingress; optional `admin_http_auth_source` (default `http-auth`) and `admin_http_auth_token` (header `X-Wafguard-Auth-Token`). |
 | `admin_read_socket`, `admin_write_socket` | Unix-socket admin listeners (read-only / write). |
@@ -115,21 +116,43 @@ enforce mode, or `ban would fire ...` in observe mode. All of these are at
 
 ## Management CLI (wafctl)
 
-`wafctl` talks to the admin HTTP API — no curl or redis-cli needed. Token comes from `-token`, `WAFGUARD_TOKEN`, or `.env`; endpoint from `-endpoint` / `WAFGUARD_ENDPOINT` (default `http://127.0.0.1:19200`).
+`wafctl` is a Cobra CLI over the admin HTTP API — no curl or redis-cli needed.
+Credentials come from flags, `WAFGUARD_*` env vars, or `.env`:
+
+```
+--endpoint       admin API URL       (WAFGUARD_ENDPOINT, default http://127.0.0.1:19200)
+--metrics-endpoint  metrics URL       (WAFGUARD_METRICS, default http://127.0.0.1:9090/metrics)
+--token          admin write token   (WAFGUARD_TOKEN)
+--app            application name    (WAFGUARD_APP, default sample_app)
+--json           raw JSON output
+```
 
 ```sh
 ./bin/wafctl status
-./bin/wafctl policy get
+./bin/wafctl config list
+./bin/wafctl config get waf_deny_threshold
+./bin/wafctl config set waf_deny_threshold 5
+./bin/wafctl config set slow_scanner_enabled true
+./bin/wafctl config add observe_response_paths /api/ /v1/
+./bin/wafctl config del observe_response_paths /v1/
 ./bin/wafctl mode get
 ./bin/wafctl mode set enforce
 ./bin/wafctl whitelist list
 ./bin/wafctl whitelist add 10.0.0.0/8 192.0.2.10
 ./bin/wafctl whitelist remove 192.0.2.10
+./bin/wafctl ban list   # IP + expiry + reason + ban_count
 ./bin/wafctl unban 113.161.70.146 "false positive"
 ./bin/wafctl inspect 113.161.70.146
+./bin/wafctl metrics
 ```
 
-Add `-json` for raw JSON output, `-app <name>` to target another app. Releases ship both `wafguard` and `wafctl` binaries.
+Config keys are the JSON tags from `policy.Config` (e.g. `waf_deny_window_sec`,
+`brute_failures`, `probe_paths`, `whitelist_ips`). `config set` works on integer
+and boolean fields; `config add` / `config del` work on list fields. Every write
+uses a compare-and-set policy update, so a stale revision is reported instead
+of silently overwriting another operator's change. Validation stays server-side.
+
+Releases ship both `wafguard` and `wafctl` binaries.
 
 ## Configure HAProxy
 

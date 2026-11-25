@@ -3,11 +3,13 @@
 -- is reported as a signal so the caller can log why an IP was flagged.
 -- KEYS[1]=dedupe, KEYS[2]=contrib zset, KEYS[3]=ban, KEYS[4]=meta, KEYS[5]=mode,
 -- KEYS[6]=fence, KEYS[7]=auth hash, KEYS[8]=brute zset, KEYS[9]=admission token,
--- KEYS[10]=policy revision, KEYS[11]=suppression, KEYS[12]=scanner zset
+-- KEYS[10]=policy revision, KEYS[11]=suppression, KEYS[12]=scanner zset,
+-- KEYS[13]=ban history zset, KEYS[14]=ban info hash
 -- ARGV: event_id, now_ms, waf_deny, waf_window_sec, waf_threshold, ban_ttl_sec,
 -- default_mode, admission_gen, max_age_ms, admission_at_ms, brute_window_sec,
 -- brute_threshold, request_id, app, client_ip, origin_status, final_status,
--- admission_rev, scanner_window_sec, scanner_responses
+-- admission_rev, scanner_window_sec, scanner_responses, repeat_threshold,
+-- repeat_window_sec, repeat_ttl_sec
 local now = tonumber(ARGV[2])
 local max_age = tonumber(ARGV[9])
 local app, ip, rid = ARGV[14], ARGV[15], ARGV[13]
@@ -16,13 +18,17 @@ local brute_window = tonumber(ARGV[11])
 local brute_threshold = tonumber(ARGV[12])
 local scanner_window = tonumber(ARGV[19])
 local scanner_threshold = tonumber(ARGV[20])
+local repeat_threshold = tonumber(ARGV[21])
+local repeat_window = tonumber(ARGV[22])
+local repeat_ttl = tonumber(ARGV[23])
 local mode = ARGV[7]
 local status = 'ok'
 local ban_reason = ''
+local ban_count, ban_threshold, ban_history, ban_ttl_used, ban_repeat = 0, 0, 0, 0, '0'
 local signals = {}
 
 local function finish()
-  local out = {status, ban_reason}
+  local out = {status, ban_reason, ban_count, ban_threshold, ban_history, ban_ttl_used, ban_repeat}
   for _, sig in ipairs(signals) do
     table.insert(out, sig)
   end
@@ -46,15 +52,25 @@ local function bump(key, window_sec, threshold, reason)
   return count
 end
 local function maybeBan(reason, count, threshold)
-  if count < threshold then return end
+  if count < threshold or status == 'banned' then return end
   if mode == 'enforce' then
-    local exp = now + (ban_ttl * 1000)
-    redis.call('SET', KEYS[3], exp, 'PX', ban_ttl * 1000)
+    redis.call('ZADD', KEYS[13], now, rid)
+    redis.call('ZREMRANGEBYSCORE', KEYS[13], 0, now - (repeat_window * 1000))
+    redis.call('PEXPIRE', KEYS[13], repeat_window * 1000)
+    local history = redis.call('ZCARD', KEYS[13])
+    local ttl = ban_ttl
+    if history >= repeat_threshold then ttl = repeat_ttl end
+    redis.call('SET', KEYS[3], now + (ttl * 1000), 'PX', ttl * 1000)
+    redis.call('HSET', KEYS[14], 'reason', reason, 'count', history,
+               'threshold', repeat_threshold, 'at_ms', ARGV[2])
+    redis.call('PEXPIRE', KEYS[14], ttl * 1000)
     status = 'banned'
-    if ban_reason == '' then ban_reason = reason end
-  elseif status ~= 'banned' then
+    ban_reason, ban_count, ban_threshold = reason, count, threshold
+    ban_history, ban_ttl_used = history, ttl
+    ban_repeat = (history >= repeat_threshold) and '1' or '0'
+  else
     status = 'shadow'
-    if ban_reason == '' then ban_reason = reason end
+    ban_reason, ban_count, ban_threshold = reason, count, threshold
   end
 end
 

@@ -236,6 +236,17 @@ func New(store *state.Store, access Access) http.Handler {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"revision": newRev, "ips": out})
+		case len(parts) == 2 && parts[1] == "bans" && r.Method == http.MethodGet:
+			if access.Role != Read && access.Role != Write {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			bans, err := store.BannedIPs(r.Context(), app)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"bans": bans})
 		default:
 			http.NotFound(w, r)
 		}

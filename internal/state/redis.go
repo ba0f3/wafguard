@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,6 +217,12 @@ func (s *Store) bruteKey(app string, ip netip.Addr) string {
 func (s *Store) scannerKey(app string, ip netip.Addr) string {
 	return s.prefix("scanner", app, ip.String())
 }
+func (s *Store) banHistoryKey(app string, ip netip.Addr) string {
+	return s.prefix("ban-history", app, ip.String())
+}
+func (s *Store) banInfoKey(app string, ip netip.Addr) string {
+	return s.prefix("ban-info", app, ip.String())
+}
 func (s *Store) dedupeKey(eventID string) string { return s.prefix("dedupe", eventID) }
 func (s *Store) contribKey(app string, ip netip.Addr) string {
 	return s.prefix("contrib", app, ip.String())
@@ -327,6 +334,7 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		s.bruteKey(app, ev.Request.ClientIP),
 		s.admissionKey(app, ev.Request.RequestID), s.policyRevKey(app),
 		s.supKey(app, ev.Request.ClientIP), s.scannerKey(app, ev.Request.ClientIP),
+		s.banHistoryKey(app, ev.Request.ClientIP), s.banInfoKey(app, ev.Request.ClientIP),
 	}
 	originStatus, finalStatus := "", ""
 	if ev.OriginStatus != nil {
@@ -343,40 +351,48 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		ev.Request.RequestID, app, ev.Request.ClientIP.String(),
 		originStatus, finalStatus, strconv.FormatUint(rev, 10),
 		cfg.ScannerWindowSec, cfg.ScannerResponses,
+		cfg.RepeatBanThreshold, cfg.RepeatBanWindowSec, cfg.RepeatBanTTLSec,
 	).Result()
 	if err != nil {
 		return err
 	}
 	if row, ok := res.([]interface{}); ok && len(row) > 0 {
 		status := fmt.Sprint(row[0])
-		banReason := ""
+		banReason, banCount, banThreshold := "-", "-", "-"
+		history, ttlUsed, repeated := "-", "-", "0"
 		if len(row) > 1 {
 			banReason = fmt.Sprint(row[1])
 		}
-		banCount, banThreshold := "-", "-"
-		for _, item := range row[2:] {
-			sig, ok := item.([]interface{})
-			if !ok || len(sig) < 3 {
-				continue
-			}
-			reason := fmt.Sprint(sig[0])
-			count := fmt.Sprint(sig[1])
-			threshold := fmt.Sprint(sig[2])
-			if reason == "backend_5xx" {
-				logging.Infof("backend_5xx app=%s request_id=%s client_ip=%s status=%s",
-					app, ev.Request.RequestID, ev.Request.ClientIP, count)
-				continue
-			}
-			logging.Infof("counter +1 app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
-				app, ev.Request.RequestID, ev.Request.ClientIP, reason, count, threshold)
-			if reason == banReason {
-				banCount, banThreshold = count, threshold
+		if len(row) > 6 {
+			banCount = fmt.Sprint(row[2])
+			banThreshold = fmt.Sprint(row[3])
+			history = fmt.Sprint(row[4])
+			ttlUsed = fmt.Sprint(row[5])
+			repeated = fmt.Sprint(row[6])
+		}
+		if len(row) > 7 {
+			for _, item := range row[7:] {
+				sig, ok := item.([]interface{})
+				if !ok || len(sig) < 3 {
+					continue
+				}
+				reason := fmt.Sprint(sig[0])
+				count := fmt.Sprint(sig[1])
+				threshold := fmt.Sprint(sig[2])
+				if reason == "backend_5xx" {
+					logging.Infof("backend_5xx app=%s request_id=%s client_ip=%s status=%s",
+						app, ev.Request.RequestID, ev.Request.ClientIP, count)
+					continue
+				}
+				logging.Infof("counter +1 app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
+					app, ev.Request.RequestID, ev.Request.ClientIP, reason, count, threshold)
 			}
 		}
 		switch status {
 		case "banned":
-			logging.Infof("ban issued app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s",
-				app, ev.Request.RequestID, ev.Request.ClientIP, banReason, banCount, banThreshold)
+			logging.Infof("ban issued app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s history=%s ttl_sec=%s repeat=%s",
+				app, ev.Request.RequestID, ev.Request.ClientIP, banReason, banCount, banThreshold,
+				history, ttlUsed, repeated)
 		case "shadow":
 			logging.Infof("ban would fire app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s mode=observe",
 				app, ev.Request.RequestID, ev.Request.ClientIP, banReason, banCount, banThreshold)
@@ -491,6 +507,46 @@ func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error
 		OperationID:     opID,
 		SuppressedUntil: time.UnixMilli(expMS),
 	}, nil
+}
+
+// BanInfo is an active Redis ban with its expiry.
+type BanInfo struct {
+	ClientIP  string    `json:"client_ip"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Reason    string    `json:"reason"`
+	BanCount  int       `json:"ban_count"`
+}
+
+// BannedIPs lists active bans for an app from the ban key TTLs.
+func (s *Store) BannedIPs(ctx context.Context, app string) ([]BanInfo, error) {
+	prefix := s.prefix("ban", app) + ":"
+	pattern := prefix + "*"
+	var out []BanInfo
+	iter := s.client.Scan(ctx, 0, pattern, 100).Iterator()
+	for iter.Next(ctx) {
+		ip := strings.TrimPrefix(iter.Val(), prefix)
+		if _, err := netip.ParseAddr(ip); err != nil {
+			continue
+		}
+		ttl, err := s.client.PTTL(ctx, iter.Val()).Result()
+		if err != nil {
+			return nil, err
+		}
+		if ttl <= 0 {
+			continue
+		}
+		info := BanInfo{ClientIP: ip, ExpiresAt: time.Now().Add(ttl)}
+		if fields, err := s.client.HGetAll(ctx, s.banInfoKey(app, netip.MustParseAddr(ip))).Result(); err == nil {
+			info.Reason = fields["reason"]
+			info.BanCount, _ = strconv.Atoi(fields["count"])
+		}
+		out = append(out, info)
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ClientIP < out[j].ClientIP })
+	return out, nil
 }
 
 // Policy returns the effective config, revision and mode for an app.
