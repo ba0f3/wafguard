@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
@@ -160,6 +161,81 @@ func New(store *state.Store, access Access) http.Handler {
 				}
 				_ = json.NewEncoder(w).Encode(insp)
 			}
+		case len(parts) == 2 && parts[1] == "policy" && r.Method == http.MethodGet:
+			if access.Role != Read && access.Role != Write {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			cfg, rev, mode, err := store.Policy(r.Context(), app)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"revision": rev, "mode": mode, "config": cfg})
+		case len(parts) == 2 && parts[1] == "status" && r.Method == http.MethodGet:
+			if access.Role != Read && access.Role != Write {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			cfg, rev, mode, err := store.Policy(r.Context(), app)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"revision": rev, "mode": mode, "whitelist_count": len(cfg.WhitelistIPs),
+			})
+		case len(parts) == 2 && parts[1] == "whitelist" && (r.Method == http.MethodGet || r.Method == http.MethodPost || r.Method == http.MethodDelete):
+			if r.Method == http.MethodGet && access.Role != Read && access.Role != Write {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if r.Method != http.MethodGet && access.Role != Write {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			cfg, rev, mode, err := store.Policy(r.Context(), app)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ips": cfg.WhitelistIPs})
+				return
+			}
+			var body struct {
+				IPs []string `json:"ips"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes+1)).Decode(&body); err != nil {
+				http.Error(w, "bad body", http.StatusBadRequest)
+				return
+			}
+			set := map[string]struct{}{}
+			for _, v := range cfg.WhitelistIPs {
+				set[v] = struct{}{}
+			}
+			for _, v := range body.IPs {
+				if strings.TrimSpace(v) == "" {
+					continue
+				}
+				if r.Method == http.MethodPost {
+					set[v] = struct{}{}
+				} else {
+					delete(set, v)
+				}
+			}
+			out := make([]string, 0, len(set))
+			for v := range set {
+				out = append(out, v)
+			}
+			sort.Strings(out)
+			cfg.WhitelistIPs = out
+			newRev, err := store.SetPolicy(r.Context(), app, rev, cfg, mode)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"revision": newRev, "ips": out})
 		default:
 			http.NotFound(w, r)
 		}

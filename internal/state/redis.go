@@ -277,6 +277,10 @@ func (s *Store) Check(ctx context.Context, req event.Request) (event.Decision, e
 	d.ReqInspect = policy.PathMatches(req.Path, cfg.ReqInspectPaths)
 	d.ResInspect = policy.PathMatches(req.Path, cfg.ResInspectPaths)
 	d.ObserveResponse = policy.PathMatches(req.Path, cfg.ObserveResponsePaths)
+	if policy.IPInList(ip, cfg.WhitelistIPs) {
+		d.Action = event.ActionAllow
+		d.Whitelisted = true
+	}
 	if len(row) > 5 {
 		switch fmt.Sprint(row[5]) {
 		case "suppressed":
@@ -300,6 +304,9 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 	cfg, err := s.appCfgAt(ctx, app, rev)
 	if err != nil {
 		return err
+	}
+	if policy.IPInList(ev.Request.ClientIP, cfg.WhitelistIPs) {
+		return nil
 	}
 	deny := 0
 	// Response observation is a separate signal. Reusing the request verdict
@@ -484,6 +491,25 @@ func (s *Store) Unban(ctx context.Context, req UnbanRequest) (UnbanResult, error
 		OperationID:     opID,
 		SuppressedUntil: time.UnixMilli(expMS),
 	}, nil
+}
+
+// Policy returns the effective config, revision and mode for an app.
+func (s *Store) Policy(ctx context.Context, app string) (policy.Config, uint64, event.Mode, error) {
+	rev, err := s.PolicyRevision(ctx, app)
+	if err != nil {
+		return policy.Config{}, 0, "", err
+	}
+	cfg, err := s.appCfgAt(ctx, app, rev)
+	if err != nil {
+		return policy.Config{}, 0, "", err
+	}
+	mode := s.cfg.DefaultMode
+	if v, err := s.client.Get(ctx, s.modeKey(app)).Result(); err == nil && v != "" {
+		mode = event.Mode(v)
+	} else if err != nil && err != redis.Nil {
+		return policy.Config{}, 0, "", err
+	}
+	return cfg, rev, mode, nil
 }
 
 func (s *Store) PolicyRevision(ctx context.Context, app string) (uint64, error) {

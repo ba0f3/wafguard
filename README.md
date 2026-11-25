@@ -79,6 +79,7 @@ Configuration is one JSON document — start from `deploy/wafguard.example.json`
 | `limits.allowed_apps` | Allowlist of application names accepted from HAProxy. |
 | `apps.<name>` | Per-app `waf_deny_window_sec`, `waf_deny_threshold`, `waf_deny_ban_sec`, `max_event_age_sec`, `admission_ttl`. |
 | `apps.<name>.req_inspect_paths` / `res_inspect_paths` / `observe_response_paths` | Central prefix lists (HAProxy `path -m beg` semantics). wafguard returns the matching inspection flags in the `check-ban` ACK, so no per-server path files or HAProxy reload are needed. Empty means disabled. |
+| `apps.<name>.whitelist_ips` | IP or CIDR entries that are never banned and never counted. Coraza still inspects them at HAProxy. |
 | `admin_http_write` | Admin listener for `PUT .../policy` and `POST .../unban`; keep on loopback. |
 | `admin_http_auth` | Auth-outcome ingress; optional `admin_http_auth_source` (default `http-auth`) and `admin_http_auth_token` (header `X-Wafguard-Auth-Token`). |
 | `admin_read_socket`, `admin_write_socket` | Unix-socket admin listeners (read-only / write). |
@@ -111,6 +112,24 @@ Reasons: `waf_deny` (Coraza deny), `brute_auth` (failed auth receipt),
 backend fault. Crossing a threshold logs `ban issued ... reason=<reason>` in
 enforce mode, or `ban would fire ...` in observe mode. All of these are at
 `info`; the per-request `spoe ...` line (including `action=allow`) is `debug`.
+
+## Management CLI (wafctl)
+
+`wafctl` talks to the admin HTTP API — no curl or redis-cli needed. Token comes from `-token`, `WAFGUARD_TOKEN`, or `.env`; endpoint from `-endpoint` / `WAFGUARD_ENDPOINT` (default `http://127.0.0.1:19200`).
+
+```sh
+./bin/wafctl status
+./bin/wafctl policy get
+./bin/wafctl mode get
+./bin/wafctl mode set enforce
+./bin/wafctl whitelist list
+./bin/wafctl whitelist add 10.0.0.0/8 192.0.2.10
+./bin/wafctl whitelist remove 192.0.2.10
+./bin/wafctl unban 113.161.70.146 "false positive"
+./bin/wafctl inspect 113.161.70.146
+```
+
+Add `-json` for raw JSON output, `-app <name>` to target another app. Releases ship both `wafguard` and `wafctl` binaries.
 
 ## Configure HAProxy
 

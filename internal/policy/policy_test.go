@@ -1,11 +1,31 @@
 package policy_test
 
 import (
+	"net/netip"
 	"testing"
 
 	"github.com/ba0f3/haproxy-waf-spoe/internal/event"
 	"github.com/ba0f3/haproxy-waf-spoe/internal/policy"
 )
+
+func TestIPInList(t *testing.T) {
+	entries := []string{"192.0.2.0/24", "2001:db8::1", "not-an-ip"}
+	if !policy.IPInList(netip.MustParseAddr("192.0.2.5"), entries) {
+		t.Fatal("IPv4 CIDR must match")
+	}
+	if policy.IPInList(netip.MustParseAddr("192.0.3.5"), entries) {
+		t.Fatal("outside CIDR must not match")
+	}
+	if !policy.IPInList(netip.MustParseAddr("2001:db8::1"), entries) {
+		t.Fatal("exact IPv6 must match")
+	}
+	if policy.IPInList(netip.MustParseAddr("2001:db8::2"), entries) {
+		t.Fatal("other IPv6 must not match")
+	}
+	if policy.IPInList(netip.MustParseAddr("192.0.2.5"), nil) {
+		t.Fatal("empty list must not match")
+	}
+}
 
 func TestPathMatchesPrefixes(t *testing.T) {
 	if !policy.PathMatches("/api/v1/users", []string{"/api/"}) {

@@ -8,6 +8,7 @@ export COMPOSE_PROJECT_NAME ?= integration
 
 build:
 	go build -o bin/wafguard ./cmd/wafguard
+	go build -o bin/wafctl ./cmd/wafctl
 
 lint:
 	golangci-lint run ./...

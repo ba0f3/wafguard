@@ -145,6 +145,59 @@ func TestObserveLogsShadowBanCandidate(t *testing.T) {
 	}
 }
 
+func TestWhitelistedIPSkipsBanAndCounters(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "whitelist",
+		DefaultMode: event.ModeEnforce,
+		Apps: map[string]policy.Config{"sample_app": {
+			WAFDenyWindowSec: 30, WAFDenyThreshold: 1, WAFDenyBanSec: 900,
+			BruteWindowSec: 60, BruteFailures: 1, ScannerWindowSec: 60, ScannerResponses: 1,
+			MaxEventAgeSec: 120, AdmissionTTL: 120,
+			WhitelistIPs: []string{"192.0.2.50/32"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ip := netip.MustParseAddr("192.0.2.50")
+	rid := "550e8400-e29b-41d4-a716-446655440090"
+	req := event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid, Path: "/api/x"}
+	d, err := store.Check(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Whitelisted || d.Action != event.ActionAllow || d.Admission == nil {
+		t.Fatalf("whitelisted decision = %+v", d)
+	}
+	st := 404
+	ev := event.Event{
+		Request: req, ID: event.EventID("sample_app", rid, event.KindWafVerdict),
+		Kind: event.KindWafVerdict, Phase: event.PhaseRequest,
+		Admission: d.Admission, RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
+		OriginStatus: &st,
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	if err := store.Observe(ctx, ev); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); strings.Contains(out, "counter +1") || strings.Contains(out, "ban issued") {
+		t.Fatalf("whitelisted event must not produce counters or bans; got %q", out)
+	}
+	d2, err := store.Check(ctx, event.Request{Application: "sample_app", ClientIP: ip, RequestID: "550e8400-e29b-41d4-a716-446655440091"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2.Action == event.ActionBan {
+		t.Fatal("whitelisted IP was banned")
+	}
+}
+
 func TestCheckSetsInspectionFlagsFromConfig(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

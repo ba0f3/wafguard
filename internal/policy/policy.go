@@ -45,6 +45,24 @@ type Config struct {
 	ReqInspectPaths      []string `json:"req_inspect_paths,omitempty"`
 	ResInspectPaths      []string `json:"res_inspect_paths,omitempty"`
 	ObserveResponsePaths []string `json:"observe_response_paths,omitempty"`
+	WhitelistIPs         []string `json:"whitelist_ips,omitempty"`
+}
+
+// IPInList reports whether ip matches any IP or CIDR entry. Invalid entries are
+// ignored so a single bad value cannot disable the whole whitelist.
+func IPInList(ip netip.Addr, entries []string) bool {
+	for _, entry := range entries {
+		if prefix, err := netip.ParsePrefix(entry); err == nil {
+			if prefix.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if addr, err := netip.ParseAddr(entry); err == nil && addr == ip {
+			return true
+		}
+	}
+	return false
 }
 
 // PathMatches implements HAProxy's `path -m beg` semantics for centrally

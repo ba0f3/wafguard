@@ -102,6 +102,7 @@ type Decision struct {
 	ReqInspect      bool
 	ResInspect      bool
 	ObserveResponse bool
+	Whitelisted     bool
 }
 
 type Limits struct {

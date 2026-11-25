@@ -10,6 +10,15 @@ builds:
       - linux
     goarch:
       - amd64
+  - id: wafctl
+    main: ./cmd/wafctl
+    binary: wafctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
 
 archives:
   - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
