@@ -199,6 +199,63 @@ func TestWhitelistedIPSkipsBanAndCounters(t *testing.T) {
 	}
 }
 
+func TestActiveBanDoesNotInflateHistory(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store, err := state.New(client, state.Config{
+		Namespace:   "active",
+		DefaultMode: event.ModeEnforce,
+		Apps: map[string]policy.Config{"sample_app": {
+			WAFDenyWindowSec: 30, WAFDenyThreshold: 1, WAFDenyBanSec: 900,
+			MaxEventAgeSec: 120, AdmissionTTL: 120,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ip := netip.MustParseAddr("192.0.2.61")
+	banKey := "active:ban:sample_app:" + ip.String()
+	observe := func(rid string) {
+		t.Helper()
+		req := event.Request{Application: "sample_app", ClientIP: ip, RequestID: rid}
+		d, err := store.Check(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev := event.Event{
+			Request: req, ID: event.EventID("sample_app", rid, event.KindWafVerdict),
+			Kind: event.KindWafVerdict, Phase: event.PhaseRequest,
+			Admission: d.Admission, RequestWAF: event.Verdict{Action: "deny", Source: "enforced"},
+		}
+		if err := store.Observe(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	observe("550e8400-e29b-41d4-a716-446655440101")
+	observe("550e8400-e29b-41d4-a716-446655440102")
+	if n := strings.Count(buf.String(), "ban issued"); n != 1 {
+		t.Fatalf("ban issued lines = %d, want 1; log: %s", n, buf.String())
+	}
+	history, err := client.ZCard(ctx, "active:ban-history:sample_app:"+ip.String()).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history != 1 {
+		t.Fatalf("history = %d, want 1 after duplicate event", history)
+	}
+	_ = mr.Del(banKey)
+	buf.Reset()
+	observe("550e8400-e29b-41d4-a716-446655440103")
+	if out := buf.String(); !strings.Contains(out, "ttl_sec=2592000") {
+		t.Fatalf("new episode must escalate to 30 days; got %q", out)
+	}
+}
+
 func TestRepeatBanEscalatesTTL(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

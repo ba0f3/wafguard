@@ -396,6 +396,9 @@ func (s *Store) Observe(ctx context.Context, ev event.Event) error {
 		case "shadow":
 			logging.Infof("ban would fire app=%s request_id=%s client_ip=%s reason=%s count=%s threshold=%s mode=observe",
 				app, ev.Request.RequestID, ev.Request.ClientIP, banReason, banCount, banThreshold)
+		case "ban_active":
+			logging.Debugf("ban already active app=%s request_id=%s client_ip=%s reason=%s",
+				app, ev.Request.RequestID, ev.Request.ClientIP, banReason)
 		}
 	}
 	return nil

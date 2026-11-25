@@ -54,6 +54,15 @@ end
 local function maybeBan(reason, count, threshold)
   if count < threshold or status == 'banned' then return end
   if mode == 'enforce' then
+    -- A burst from one IP can cross the threshold on many replicas at once.
+    -- Only the request that starts a new ban episode enters history; the rest
+    -- are duplicate logs and must not inflate the repeat counter.
+    local active = redis.call('GET', KEYS[3])
+    if active and tonumber(active) and tonumber(active) > now then
+      status = 'ban_active'
+      ban_reason = reason
+      return
+    end
     redis.call('ZADD', KEYS[13], now, rid)
     redis.call('ZREMRANGEBYSCORE', KEYS[13], 0, now - (repeat_window * 1000))
     redis.call('PEXPIRE', KEYS[13], repeat_window * 1000)
