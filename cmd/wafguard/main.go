@@ -120,6 +120,14 @@ const (
 	redisMaxRetries      = 2
 	redisRetryMinBackoff = 5 * time.Millisecond
 	redisRetryMaxBackoff = 40 * time.Millisecond
+
+	// Sentinel discovery crosses a WAN link; the tight per-request timeouts
+	// above are too short for dial + AUTH + SENTINEL round trips. Per-request
+	// calls stay bounded by spoa.Handler.Timeout (450ms).
+	redisFailoverDialTimeout  = 2 * time.Second
+	redisFailoverIOTimeout    = 3 * time.Second
+	redisFailoverPoolTimeout  = 3 * time.Second
+	redisStartupPingTimeout   = 3 * time.Second
 )
 
 func newRedisOptions(ro redisOptions) *redis.Options {
@@ -135,8 +143,8 @@ func newRedisOptions(ro redisOptions) *redis.Options {
 func newFailoverOptions(ro redisOptions) *redis.FailoverOptions {
 	opt := &redis.FailoverOptions{
 		Username: ro.Username, Password: ro.Password, DB: ro.DB,
-		DialTimeout: redisDialTimeout, ReadTimeout: redisIOTimeout,
-		WriteTimeout: redisIOTimeout, PoolTimeout: redisPoolTimeout,
+		DialTimeout: redisFailoverDialTimeout, ReadTimeout: redisFailoverIOTimeout,
+		WriteTimeout: redisFailoverIOTimeout, PoolTimeout: redisFailoverPoolTimeout,
 		MaxRetries: redisMaxRetries, MinRetryBackoff: redisRetryMinBackoff,
 		MaxRetryBackoff: redisRetryMaxBackoff, ContextTimeoutEnabled: true,
 	}
@@ -193,7 +201,7 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	}
 	logging.Infof("wafguard starting mode=%s redis=%s spop=%s metrics=%s", mode, redisTarget, fc.SPOPListen, fc.Metrics)
 	client := newRedisClient(fc.Redis)
-	pctx, pcancel := context.WithTimeout(context.Background(), redisIOTimeout)
+	pctx, pcancel := context.WithTimeout(context.Background(), redisStartupPingTimeout)
 	pingErr := client.Ping(pctx).Err()
 	pcancel()
 	if pingErr != nil {
@@ -201,7 +209,10 @@ func run(ctx context.Context, cfg runtimeConfig) error {
 	} else {
 		logging.Infof("redis ok target=%s", redisTarget)
 	}
-	store, err := initStoreWithRetry(context.Background(), 8, 500*time.Millisecond, func() (*state.Store, error) {
+	// Sentinel needs time to elect a new master after a node dies. Keep
+	// retrying across that window instead of crash-looping on a transient
+	// "no master" state.
+	store, err := initStoreWithRetry(ctx, 30, time.Second, func() (*state.Store, error) {
 		return state.New(client, state.Config{
 			Namespace:       "wg",
 			DefaultMode:     mode,

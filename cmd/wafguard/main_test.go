@@ -58,6 +58,15 @@ func TestRedisAuthOptions(t *testing.T) {
 	}
 }
 
+func TestFailoverTimeoutsAllowSentinelWAN(t *testing.T) {
+	fo := newFailoverOptions(redisOptions{Sentinel: &sentinelOptions{MasterName: "core", Addrs: []string{"s:26379"}}})
+	so := newRedisOptions(redisOptions{Addr: "redis:6379"})
+	if fo.DialTimeout <= so.DialTimeout || fo.ReadTimeout <= so.ReadTimeout {
+		t.Fatalf("failover timeouts must be looser than per-request: dial %v/%v read %v/%v",
+			fo.DialTimeout, so.DialTimeout, fo.ReadTimeout, so.ReadTimeout)
+	}
+}
+
 func TestFailoverAuthOptions(t *testing.T) {
 	opt := newFailoverOptions(redisOptions{
 		Username: "wg", Password: "master-secret", DB: 4,

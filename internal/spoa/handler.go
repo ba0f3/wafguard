@@ -134,7 +134,7 @@ func (h *Handler) HandleSPOE(ctx context.Context, w *encoding.ActionWriter, m *e
 		d, err := h.Backend.Check(opCtx, ev.Request)
 		if err != nil {
 			result = "degraded"
-			why = "redis_error"
+			why = "redis_error: " + err.Error()
 			d = event.UnknownDecision(true)
 		}
 		decision = d

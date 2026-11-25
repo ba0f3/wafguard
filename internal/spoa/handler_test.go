@@ -52,6 +52,7 @@ type fakeBackend struct {
 	observeCalls int
 	checkAction  event.Action
 	checkSlow    time.Duration
+	checkErr     error
 	observeErr   error
 }
 
@@ -59,6 +60,9 @@ func (f *fakeBackend) Check(ctx context.Context, req event.Request) (event.Decis
 	f.mu.Lock()
 	f.checkCalls++
 	f.mu.Unlock()
+	if f.checkErr != nil {
+		return event.UnknownDecision(true), f.checkErr
+	}
 	if f.checkSlow > 0 {
 		select {
 		case <-time.After(f.checkSlow):
@@ -135,6 +139,29 @@ func TestWriteAdmissionACKSetsInspectionVars(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("ACK missing var %q; got %q", want, out)
 		}
+	}
+}
+
+func TestHandleSPOELogsCheckErrorDetail(t *testing.T) {
+	h := NewHandler(&fakeBackend{checkErr: errors.New("policy config missing for revision 3")}, event.Limits{
+		AllowedApps: map[string]struct{}{"sample_app": {}},
+	})
+	m := mustMessage(t, "check-ban", map[string]string{
+		"schema_version": "1",
+		"request_id":     "550e8400-e29b-41d4-a716-446655440097",
+		"app":            "sample_app",
+		"client_ip":      "192.0.2.8",
+		"peer_ip":        "192.0.2.1",
+		"path":           "/ok",
+	})
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	h.HandleSPOE(context.Background(), &encoding.ActionWriter{}, m)
+	out := buf.String()
+	if !strings.Contains(out, "reason=redis_error: policy config missing for revision 3") {
+		t.Fatalf("check error detail missing; got %q", out)
 	}
 }
 
