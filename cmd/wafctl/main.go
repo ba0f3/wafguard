@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,42 @@ func (c *client) do(method, path string, body any) ([]byte, error) {
 
 func (c *client) appPath(suffix string) string {
 	return "/v1/apps/" + url.PathEscape(c.app) + suffix
+}
+
+func (c *client) unban(ip, reason string) ([]byte, error) {
+	return c.do(http.MethodPost, c.appPath("/unban"), map[string]string{
+		"client_ip":    ip,
+		"operation_id": "wafctl-" + rand.Text(),
+		"reason":       reason,
+	})
+}
+
+func (c *client) unbanAll() (int, error) {
+	data, err := c.do(http.MethodGet, c.appPath("/bans"), nil)
+	if err != nil {
+		return 0, err
+	}
+	var result struct {
+		Bans []struct {
+			ClientIP string `json:"client_ip"`
+		} `json:"bans"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return 0, err
+	}
+	// Redis SCAN can return the same IP more than once.
+	cleared := make(map[string]struct{}, len(result.Bans))
+	for _, ban := range result.Bans {
+		ip := ban.ClientIP
+		if _, ok := cleared[ip]; ok {
+			continue
+		}
+		if _, err := c.unban(ip, "bulk unban via wafctl"); err != nil {
+			return len(cleared), fmt.Errorf("unban %s failed after %d successful unban operations: %w", ip, len(cleared), err)
+		}
+		cleared[ip] = struct{}{}
+	}
+	return len(cleared), nil
 }
 
 func (c *client) getPolicy() (map[string]any, uint64, error) {
@@ -504,27 +541,43 @@ func newRootCmd(out io.Writer, makeClient func(endpoint, metrics, token, app str
 	)
 	root.AddCommand(banCmd)
 
-	root.AddCommand(
-		&cobra.Command{
-			Use:   "unban <ip> [reason]",
-			Short: "Clear an IP ban",
-			Args:  cobra.RangeArgs(1, 2),
-			RunE: func(_ *cobra.Command, args []string) error {
-				reason := "manual unban via wafctl"
-				if len(args) == 2 {
-					reason = args[1]
-				}
-				data, err := c.do(http.MethodPost, c.appPath("/unban"), map[string]any{
-					"client_ip":    args[0],
-					"operation_id": fmt.Sprintf("wafctl-%d", time.Now().UnixNano()),
-					"reason":       reason,
-				})
+	var unbanAll bool
+	unbanCmd := &cobra.Command{
+		Use:   "unban {<ip> [reason] | --all}",
+		Short: "Clear one IP ban or all active bans for the selected application",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if unbanAll {
+				return cobra.NoArgs(cmd, args)
+			}
+			return cobra.RangeArgs(1, 2)(cmd, args)
+		},
+		RunE: func(_ *cobra.Command, args []string) error {
+			if unbanAll {
+				count, err := c.unbanAll()
 				if err != nil {
 					return err
 				}
-				return printJSONOrValue(out, data, asJSON)
-			},
+				if asJSON {
+					return json.NewEncoder(out).Encode(map[string]int{"unbanned": count})
+				}
+				_, err = fmt.Fprintf(out, "unbanned=%d\n", count)
+				return err
+			}
+			reason := "manual unban via wafctl"
+			if len(args) == 2 {
+				reason = args[1]
+			}
+			data, err := c.unban(args[0], reason)
+			if err != nil {
+				return err
+			}
+			return printJSONOrValue(out, data, asJSON)
 		},
+	}
+	unbanCmd.Flags().BoolVar(&unbanAll, "all", false, "clear every active ban listed for the selected application")
+
+	root.AddCommand(
+		unbanCmd,
 		&cobra.Command{
 			Use:   "inspect <ip>",
 			Short: "Inspect one IP's decision state",

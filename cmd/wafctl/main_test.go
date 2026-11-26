@@ -9,6 +9,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/admin"
+	"github.com/ba0f3/haproxy-waf-spoe/internal/state"
+	"github.com/redis/go-redis/v9"
 )
 
 func executeCmd(t *testing.T, h http.Handler, args ...string) (string, error) {
@@ -92,5 +97,75 @@ func TestBanListCommand(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestUnbanAllClearsOnlySelectedApp(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store, err := state.New(rdb, state.Config{Namespace: "wafctl-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bans := []string{
+		"wafctl-test:ban:sample_app:192.0.2.9",
+		"wafctl-test:ban:sample_app:2001:db8::9",
+		"wafctl-test:ban:other_app:192.0.2.9",
+	}
+	for _, key := range bans {
+		if err := mr.Set(key, "1"); err != nil {
+			t.Fatal(err)
+		}
+		mr.SetTTL(key, time.Minute)
+	}
+	handler := admin.New(store, admin.Access{Role: admin.Write})
+	for _, want := range []int{2, 0} {
+		out, err := executeCmd(t, handler, "unban", "--all", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result map[string]int
+		if err := json.Unmarshal([]byte(out), &result); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := result["unbanned"]; !ok || got != want {
+			t.Fatalf("unbanned = %s, want %d", out, want)
+		}
+	}
+	for i, key := range bans {
+		if got, want := mr.Exists(key), i == 2; got != want {
+			t.Errorf("key %s exists = %t, want %t", key, got, want)
+		}
+	}
+}
+
+func TestUnbanAllReportsPartialFailure(t *testing.T) {
+	_, err := executeCmd(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = io.WriteString(w, `{"bans":[{"client_ip":"192.0.2.1"},{"client_ip":"192.0.2.1"},{"client_ip":"192.0.2.2"}]}`)
+			return
+		}
+		var body struct {
+			ClientIP string `json:"client_ip"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.ClientIP == "192.0.2.2" {
+			http.Error(w, "write failed", http.StatusInternalServerError)
+		}
+	}), "unban", "--all")
+	if err == nil || !strings.Contains(err.Error(), "after 1 successful unban") || !strings.Contains(err.Error(), "192.0.2.2") || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("expected failed IP and 1 successful unban, got %v", err)
+	}
+}
+
+func TestUnbanAllRejectsIPArgument(t *testing.T) {
+	_, err := executeCmd(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("unban --all with an IP must not contact the server")
+	}), "unban", "--all", "192.0.2.1")
+	if err == nil {
+		t.Fatal("unban --all accepted an IP argument")
 	}
 }

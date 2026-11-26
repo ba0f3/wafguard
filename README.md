@@ -142,9 +142,15 @@ Credentials come from flags, `WAFGUARD_*` env vars, or `.env`:
 ./bin/wafctl whitelist remove 192.0.2.10
 ./bin/wafctl ban list   # IP + expiry + reason + ban_count
 ./bin/wafctl unban 113.161.70.146 "false positive"
+./bin/wafctl --app sample_app unban --all
 ./bin/wafctl inspect 113.161.70.146
 ./bin/wafctl metrics
 ```
+
+`unban --all` requires admin write access. It lists active bans for the selected
+application and clears each listed IP in turn. The command reports the number
+of successful unbans. If an unban request fails, the command stops and reports
+the failed IP and the number of successful unbans so far.
 
 Config keys are the JSON tags from `policy.Config` (e.g. `waf_deny_window_sec`,
 `brute_failures`, `probe_paths`, `whitelist_ips`). `config set` works on integer
