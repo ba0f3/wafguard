@@ -33,6 +33,13 @@ changelog:
       - '^docs:'
       - '^test:'
 
+# The repository was renamed; inference from the git remote still yields the
+# old path, which breaks asset uploads (307 from uploads.github.com).
+release:
+  github:
+    owner: ba0f3
+    name: wafguard
+
 dockers:
   - dockerfile: deploy/Dockerfile.goreleaser
     image_templates:
