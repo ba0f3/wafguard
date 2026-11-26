@@ -17,11 +17,19 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
+      - darwin
+      - windows
     goarch:
       - amd64
+      - arm64
 
 archives:
-  - name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+  - id: wafguard
+    ids: [wafguard]
+    name_template: 'wafguard_{{ .Os }}_{{ .Arch }}'
+  - id: wafctl
+    ids: [wafctl]
+    name_template: 'wafctl_{{ .Os }}_{{ .Arch }}'
 
 checksum:
   name_template: checksums.txt
@@ -41,13 +49,14 @@ release:
     name: wafguard
 
 dockers:
-  - dockerfile: deploy/Dockerfile.goreleaser
+  - ids: [wafguard]
+    dockerfile: deploy/Dockerfile.goreleaser
     image_templates:
       - 'ghcr.io/ba0f3/haproxy-waf-spoe:{{ .Version }}'
       - 'ghcr.io/ba0f3/haproxy-waf-spoe:latest'
     goos: linux
     goarch: amd64
     build_flag_templates:
-      - '--label=org.opencontainers.image.source=https://github.com/ba0f3/haproxy-waf-spoe'
+      - '--label=org.opencontainers.image.source=https://github.com/ba0f3/wafguard'
       - '--label=org.opencontainers.image.version={{ .Version }}'
       - '--label=org.opencontainers.image.revision={{ .FullCommit }}'
